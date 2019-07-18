@@ -152,6 +152,13 @@ impl WasiCtx {
             .and_then(|ctx| ctx.build())
     }
 
+    pub fn contains_fd_entry(&self, fd: host::__wasi_fd_t) -> bool {
+        match self.fds.get(&fd) {
+            Some(_) => true,
+            _ => false,
+        }
+    }
+
     pub fn get_fd_entry(
         &self,
         fd: host::__wasi_fd_t,
