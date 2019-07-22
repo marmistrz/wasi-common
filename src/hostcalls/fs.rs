@@ -1007,7 +1007,7 @@ pub fn fd_filestat_get(
     );
 
     let fd = dec_fd(fd);
-    let fd = match wasi_ctx
+    let file = match wasi_ctx
         .get_fd_entry(fd, 0, 0)
         .and_then(|fe| fe.fd_object.descriptor.as_file())
     {
@@ -1015,10 +1015,7 @@ pub fn fd_filestat_get(
         Err(e) => return return_enc_errno(e),
     };
 
-    let host_filestat = match hostcalls_impl::fd_filestat_get(fd) {
-        Ok(fstat) => fstat,
-        Err(e) => return return_enc_errno(e),
-    };
+    let host_filestat = fd_filestat_get_impl(file).unwrap(); // FIXME
 
     trace!("     | *filestat_ptr={:?}", host_filestat);
 
@@ -1028,6 +1025,34 @@ pub fn fd_filestat_get(
     };
 
     return_enc_errno(ret)
+}
+
+fn fd_filestat_get_impl(file: &std::fs::File) -> io::Result<host::__wasi_filestat_t> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    fn timestamp(st: SystemTime) -> u64 {
+        use std::convert::TryInto;
+        st.duration_since(UNIX_EPOCH)
+            .expect("invalid SystemTime")
+            .as_nanos()
+            .try_into()
+            .expect("overflow")
+    }
+    let metadata = file.metadata()?;
+    // On Windows all the information needed is either in libstd or provided by
+    // GetFileInformationByHandle winapi call. All of it is much easier to implement
+    // in libstd
+    Ok(host::__wasi_filestat_t {
+        st_dev: 0,   // FIXME: dev() on Unix, dwVolumeSerialNumber on Windows
+        st_ino: 0,   // FIXME: ino() on Unix, nFileIndexHigh+Low on Windows
+        st_nlink: 0, // FIXME: nlink() on Unix, nNumberOfLinks on Windows
+        st_size: metadata.len(),
+        st_atim: timestamp(metadata.accessed()?),
+        st_ctim: timestamp(metadata.created()?),
+        st_mtim: timestamp(metadata.modified()?),
+        st_filetype: 0, // FIXME
+        // ^ https://docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
+        // on Unix: we have FileTypeExt or we can use nix
+    })
 }
 
 #[wasi_common_cbindgen]
