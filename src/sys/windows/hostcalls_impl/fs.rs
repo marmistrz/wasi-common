@@ -173,8 +173,39 @@ pub(crate) fn path_rename(
     unimplemented!("path_rename")
 }
 
-pub(crate) fn fd_filestat_get(fd: &File) -> Result<host::__wasi_filestat_t> {
-    unimplemented!("fd_filestat_get")
+pub(crate) fn num_hardlinks(file: &File) -> io::Result<u64> {
+    Ok(winx::file::get_fileinfo(file)?.nNumberOfLinks.into())
+}
+
+pub(crate) fn device_id(file: &File) -> io::Result<u64> {
+    Ok(winx::file::get_fileinfo(file)?.dwVolumeSerialNumber.into())
+}
+
+pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
+    let info = winx::file::get_fileinfo(file)?;
+    let high = info.nFileIndexHigh;
+    let low = info.nFileIndexLow;
+    let no = ((high as u64) << 32) | (low as u64);
+    Ok(no)
+}
+
+pub(crate) fn change_time(file: &File) -> io::Result<u64> {
+    winx::file::change_time(file)
+}
+
+pub(crate) fn filetype(file: &File) -> io::Result<host::__wasi_filetype_t> {
+    let ftype = file.metadata()?.file_type();
+    let ret = if ftype.is_file() {
+        host::__WASI_FILETYPE_REGULAR_FILE
+    } else if ftype.is_dir() {
+        host::__WASI_FILETYPE_DIRECTORY
+    } else if ftype.is_symlink() {
+        host::__WASI_FILETYPE_SYMBOLIC_LINK
+    } else {
+        host::__WASI_FILETYPE_UNKNOWN
+    };
+
+    Ok(ret)
 }
 
 pub(crate) fn fd_filestat_set_times(

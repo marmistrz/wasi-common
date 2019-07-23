@@ -12,6 +12,7 @@ use std::ffi::CString;
 use std::fs::File;
 use std::os::unix::fs::FileExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd};
+use std::io;
 
 pub(crate) fn fd_pread(
     file: &File,
@@ -356,11 +357,49 @@ pub(crate) fn path_rename(
     }
 }
 
-pub(crate) fn fd_filestat_get(fd: &File) -> Result<host::__wasi_filestat_t> {
-    use nix::sys::stat::fstat;
-    let filestat =
-        fstat(fd.as_raw_fd()).map_err(|err| host_impl::errno_from_nix(err.as_errno().unwrap()))?;
-    host_impl::filestat_from_nix(filestat)
+pub(crate) fn num_hardlinks(file: &File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.nlink())
+}
+
+pub(crate) fn device_id(file: &File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.dev())
+}
+
+pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.ino())
+}
+
+pub(crate) fn filetype(file: &File) -> io::Result<host::__wasi_filetype_t> {
+    use std::os::unix::fs::FileTypeExt;
+    let ftype = file.metadata()?.file_type();
+    let ret = if ftype.is_file() {
+        host::__WASI_FILETYPE_REGULAR_FILE
+    } else if ftype.is_dir() {
+        host::__WASI_FILETYPE_DIRECTORY
+    } else if ftype.is_symlink() {
+        host::__WASI_FILETYPE_SYMBOLIC_LINK
+    } else if ftype.is_char_device() {
+        host::__WASI_FILETYPE_CHARACTER_DEVICE
+    } else if ftype.is_block_device() {
+        host::__WASI_FILETYPE_BLOCK_DEVICE
+    } else if ftype.is_socket() || ftype.is_fifo() {
+        // TODO we should use getsockopt to find out if it's
+        // SOCKET_STREAM or SOCKET_DGRAM
+        host::__WASI_FILETYPE_SOCKET_STREAM
+    } else {
+        host::__WASI_FILETYPE_UNKNOWN
+    };
+
+    Ok(ret)
+}
+
+pub(crate) fn change_time(file: &File) -> io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    use std::convert::TryInto;
+    Ok(file.metadata()?.ctime().try_into().unwrap())
 }
 
 pub(crate) fn fd_filestat_set_times(
