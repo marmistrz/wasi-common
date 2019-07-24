@@ -753,9 +753,6 @@ fn fd_filestat_get_impl(file: &std::fs::File) -> io::Result<host::__wasi_filesta
             })
     }
     let metadata = file.metadata()?;
-    // On Windows all the information needed is either in libstd or provided by
-    // GetFileInformationByHandle winapi call. All of it is much easier to implement
-    // in libstd
     Ok(host::__wasi_filestat_t {
         st_dev: hostcalls_impl::device_id(file)?,
         st_ino: hostcalls_impl::file_serial_no(file)?,
