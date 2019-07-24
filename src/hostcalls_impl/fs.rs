@@ -761,7 +761,7 @@ fn fd_filestat_get_impl(file: &std::fs::File) -> io::Result<host::__wasi_filesta
             .expect("overflow"),
         st_size: metadata.len(),
         st_atim: metadata.accessed().and_then(timestamp)?,
-        st_ctim: hostcalls_impl::change_time(file)?,
+        st_ctim: hostcalls_impl::change_time(file)?.try_into().expect("overflow"),
         st_mtim: metadata.modified().and_then(timestamp)?,
         st_filetype: hostcalls_impl::filetype(file)?,
     })

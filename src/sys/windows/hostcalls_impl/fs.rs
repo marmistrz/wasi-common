@@ -189,7 +189,7 @@ pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
     Ok(no)
 }
 
-pub(crate) fn change_time(file: &File) -> io::Result<u64> {
+pub(crate) fn change_time(file: &File) -> io::Result<i64> {
     winx::file::change_time(file)
 }
 

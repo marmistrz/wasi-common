@@ -483,10 +483,9 @@ pub fn get_fileinfo(file: &File) -> io::Result<fileapi::BY_HANDLE_FILE_INFORMATI
     Ok(info)
 }
 
-pub fn change_time(file: &File) -> io::Result<u64> {
+pub fn change_time(file: &File) -> io::Result<i64> {
     use fileapi::FILE_BASIC_INFO;
     use minwinbase::FileBasicInfo;
-    use std::convert::TryInto;
     use std::mem;
     use winbase::GetFileInformationByHandleEx;
 
@@ -503,5 +502,5 @@ pub fn change_time(file: &File) -> io::Result<u64> {
         *info.ChangeTime.QuadPart()
     };
 
-    Ok(tm.try_into().expect("overflow"))
+    Ok(tm)
 }

@@ -10,9 +10,9 @@ use crate::{host, wasm32, Result};
 use nix::libc::{self, c_long, c_void, off_t};
 use std::ffi::CString;
 use std::fs::File;
+use std::io;
 use std::os::unix::fs::FileExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd};
-use std::io;
 
 pub(crate) fn fd_pread(
     file: &File,
@@ -396,10 +396,10 @@ pub(crate) fn filetype(file: &File) -> io::Result<host::__wasi_filetype_t> {
     Ok(ret)
 }
 
-pub(crate) fn change_time(file: &File) -> io::Result<u64> {
-    use std::os::unix::fs::MetadataExt;
+pub(crate) fn change_time(file: &File) -> io::Result<i64> {
     use std::convert::TryInto;
-    Ok(file.metadata()?.ctime().try_into().unwrap())
+    use std::os::unix::fs::MetadataExt;
+    Ok(file.metadata()?.ctime())
 }
 
 pub(crate) fn fd_filestat_set_times(
