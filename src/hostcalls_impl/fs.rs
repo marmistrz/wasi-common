@@ -730,40 +730,52 @@ pub(crate) fn fd_filestat_get(
         .get_fd_entry(fd, 0, 0)
         .and_then(|fe| fe.fd_object.descriptor.as_file())?;
 
-    let host_filestat = fd_filestat_get_impl(fd).map_err(|e| {
-        debug!("fd_filestat_get: error: {}", e);
-        e.raw_os_error().map_or(host::__WASI_EIO, errno_from_host)
-    })?;
+    let host_filestat = fd_filestat_get_impl(fd)?;
 
     trace!("     | *filestat_ptr={:?}", host_filestat);
 
     enc_filestat_byref(memory, filestat_ptr, host_filestat)
 }
 
-fn fd_filestat_get_impl(file: &std::fs::File) -> io::Result<host::__wasi_filestat_t> {
+fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t> {
     use std::convert::TryInto;
     use std::time::{SystemTime, UNIX_EPOCH};
-    fn timestamp(st: SystemTime) -> io::Result<u64> {
+
+    fn convert_err(e: io::Error) -> host::__wasi_errno_t {
+        debug!("fd_filestat_get: os error: {}", e);
+        e.raw_os_error().map_or(host::__WASI_EIO, errno_from_host)
+    }
+
+    fn timestamp(st: SystemTime) -> Result<u64> {
         st.duration_since(UNIX_EPOCH)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|_| host::__WASI_EINVAL)? // date earlier than UNIX_EPOCH
             .as_nanos()
             .try_into()
-            .map_err(|e: std::num::TryFromIntError| {
-                io::Error::new(io::ErrorKind::Other, e.to_string())
-            })
+            .map_err(|_| host::__WASI_EOVERFLOW) // u128 doesn't fit into u64
     }
-    let metadata = file.metadata()?;
+
+    let metadata = file.metadata().map_err(convert_err)?;
     Ok(host::__wasi_filestat_t {
-        st_dev: hostcalls_impl::device_id(file)?,
-        st_ino: hostcalls_impl::file_serial_no(file)?,
-        st_nlink: hostcalls_impl::num_hardlinks(file)?
+        st_dev: hostcalls_impl::device_id(file).map_err(convert_err)?,
+        st_ino: hostcalls_impl::file_serial_no(file).map_err(convert_err)?,
+        st_nlink: hostcalls_impl::num_hardlinks(file)
+            .map_err(convert_err)?
             .try_into()
-            .expect("overflow"),
+            .map_err(|_| host::__WASI_EOVERFLOW)?, // u64 doesn't fit into u32
         st_size: metadata.len(),
-        st_atim: metadata.accessed().and_then(timestamp)?,
-        st_ctim: hostcalls_impl::change_time(file)?.try_into().expect("overflow"),
-        st_mtim: metadata.modified().and_then(timestamp)?,
-        st_filetype: hostcalls_impl::filetype(file)?,
+        st_atim: metadata
+            .accessed()
+            .map_err(convert_err)
+            .and_then(timestamp)?,
+        st_ctim: hostcalls_impl::change_time(file)
+            .map_err(convert_err)?
+            .try_into()
+            .map_err(|_| host::__WASI_EOVERFLOW)?, // i64 doesn't fit into u64
+        st_mtim: metadata
+            .modified()
+            .map_err(convert_err)
+            .and_then(timestamp)?,
+        st_filetype: hostcalls_impl::filetype(file).map_err(convert_err)?,
     })
 }
 
