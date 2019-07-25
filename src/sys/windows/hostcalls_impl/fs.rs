@@ -7,7 +7,7 @@ use crate::sys::errno_from_host;
 use crate::sys::fdentry_impl::determine_type_rights;
 use crate::sys::host_impl;
 use crate::{host, Result};
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io::{self, Seek, SeekFrom};
 use std::os::windows::fs::FileExt;
 use std::os::windows::prelude::{AsRawHandle, FromRawHandle};
@@ -173,15 +173,15 @@ pub(crate) fn path_rename(
     unimplemented!("path_rename")
 }
 
-pub(crate) fn num_hardlinks(file: &File) -> io::Result<u64> {
+pub(crate) fn num_hardlinks(file: &File, _metadata: &Metadata) -> io::Result<u64> {
     Ok(winx::file::get_fileinfo(file)?.nNumberOfLinks.into())
 }
 
-pub(crate) fn device_id(file: &File) -> io::Result<u64> {
+pub(crate) fn device_id(file: &File, _metadata: &Metadata) -> io::Result<u64> {
     Ok(winx::file::get_fileinfo(file)?.dwVolumeSerialNumber.into())
 }
 
-pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
+pub(crate) fn file_serial_no(file: &File, _metadata: &Metadata) -> io::Result<u64> {
     let info = winx::file::get_fileinfo(file)?;
     let high = info.nFileIndexHigh;
     let low = info.nFileIndexLow;
@@ -189,12 +189,12 @@ pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
     Ok(no)
 }
 
-pub(crate) fn change_time(file: &File) -> io::Result<i64> {
+pub(crate) fn change_time(file: &File, _metadata: &Metadata) -> io::Result<i64> {
     winx::file::change_time(file)
 }
 
-pub(crate) fn filetype(file: &File) -> io::Result<host::__wasi_filetype_t> {
-    let ftype = file.metadata()?.file_type();
+pub(crate) fn filetype(metadata: &Metadata) -> io::Result<host::__wasi_filetype_t> {
+    let ftype = metadata.file_type();
     let ret = if ftype.is_file() {
         host::__WASI_FILETYPE_REGULAR_FILE
     } else if ftype.is_dir() {

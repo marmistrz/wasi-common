@@ -9,7 +9,7 @@ use crate::sys::host_impl;
 use crate::{host, wasm32, Result};
 use nix::libc::{self, c_long, c_void, off_t};
 use std::ffi::CString;
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io;
 use std::os::unix::fs::FileExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd};
@@ -357,24 +357,24 @@ pub(crate) fn path_rename(
     }
 }
 
-pub(crate) fn num_hardlinks(file: &File) -> io::Result<u64> {
+pub(crate) fn num_hardlinks(_file: &File, metadata: &Metadata) -> io::Result<u64> {
     use std::os::unix::fs::MetadataExt;
-    Ok(file.metadata()?.nlink())
+    Ok(metadata.nlink())
 }
 
-pub(crate) fn device_id(file: &File) -> io::Result<u64> {
+pub(crate) fn device_id(_file: &File, metadata: &Metadata) -> io::Result<u64> {
     use std::os::unix::fs::MetadataExt;
-    Ok(file.metadata()?.dev())
+    Ok(metadata.dev())
 }
 
-pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
+pub(crate) fn file_serial_no(_file: &File, metadata: &Metadata) -> io::Result<u64> {
     use std::os::unix::fs::MetadataExt;
-    Ok(file.metadata()?.ino())
+    Ok(metadata.ino())
 }
 
-pub(crate) fn filetype(file: &File) -> io::Result<host::__wasi_filetype_t> {
+pub(crate) fn filetype(metadata: &Metadata) -> io::Result<host::__wasi_filetype_t> {
     use std::os::unix::fs::FileTypeExt;
-    let ftype = file.metadata()?.file_type();
+    let ftype = metadata.file_type();
     let ret = if ftype.is_file() {
         host::__WASI_FILETYPE_REGULAR_FILE
     } else if ftype.is_dir() {
@@ -396,10 +396,9 @@ pub(crate) fn filetype(file: &File) -> io::Result<host::__wasi_filetype_t> {
     Ok(ret)
 }
 
-pub(crate) fn change_time(file: &File) -> io::Result<i64> {
-    use std::convert::TryInto;
+pub(crate) fn change_time(_file: &File, metadata: &Metadata) -> io::Result<i64> {
     use std::os::unix::fs::MetadataExt;
-    Ok(file.metadata()?.ctime())
+    Ok(metadata.ctime())
 }
 
 pub(crate) fn fd_filestat_set_times(

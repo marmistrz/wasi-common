@@ -756,9 +756,9 @@ fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t>
 
     let metadata = file.metadata().map_err(convert_err)?;
     Ok(host::__wasi_filestat_t {
-        st_dev: hostcalls_impl::device_id(file).map_err(convert_err)?,
-        st_ino: hostcalls_impl::file_serial_no(file).map_err(convert_err)?,
-        st_nlink: hostcalls_impl::num_hardlinks(file)
+        st_dev: hostcalls_impl::device_id(file, &metadata).map_err(convert_err)?,
+        st_ino: hostcalls_impl::file_serial_no(file, &metadata).map_err(convert_err)?,
+        st_nlink: hostcalls_impl::num_hardlinks(file, &metadata)
             .map_err(convert_err)?
             .try_into()
             .map_err(|_| host::__WASI_EOVERFLOW)?, // u64 doesn't fit into u32
@@ -767,7 +767,7 @@ fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t>
             .accessed()
             .map_err(convert_err)
             .and_then(timestamp)?,
-        st_ctim: hostcalls_impl::change_time(file)
+        st_ctim: hostcalls_impl::change_time(file, &metadata)
             .map_err(convert_err)?
             .try_into()
             .map_err(|_| host::__WASI_EOVERFLOW)?, // i64 doesn't fit into u64
@@ -775,7 +775,7 @@ fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t>
             .modified()
             .map_err(convert_err)
             .and_then(timestamp)?,
-        st_filetype: hostcalls_impl::filetype(file).map_err(convert_err)?,
+        st_filetype: hostcalls_impl::filetype(&metadata).map_err(convert_err)?,
     })
 }
 
