@@ -3,11 +3,13 @@
 use super::fs_helpers::*;
 use crate::ctx::WasiCtx;
 use crate::fdentry::FdEntry;
+use crate::helpers::systemtime_to_timestamp;
 use crate::sys::errno_from_host;
 use crate::sys::fdentry_impl::determine_type_rights;
 use crate::sys::host_impl;
 use crate::{host, wasm32, Result};
 use nix::libc::{self, c_long, c_void, off_t};
+use std::convert::TryInto;
 use std::ffi::CString;
 use std::fs::{File, Metadata};
 use std::io;
@@ -357,25 +359,43 @@ pub(crate) fn path_rename(
     }
 }
 
-pub(crate) fn num_hardlinks(_file: &File, metadata: &Metadata) -> io::Result<u64> {
+pub(crate) fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t> {
     use std::os::unix::fs::MetadataExt;
-    Ok(metadata.nlink())
+
+    fn convert_err(e: io::Error) -> host::__wasi_errno_t {
+        log::debug!("fd_filestat_get: os error: {}", e);
+        e.raw_os_error().map_or(host::__WASI_EIO, errno_from_host)
+    }
+
+    let metadata = file.metadata().map_err(convert_err)?;
+    Ok(host::__wasi_filestat_t {
+        st_dev: metadata.dev(),
+        st_ino: metadata.ino(),
+        st_nlink: metadata
+            .nlink()
+            .try_into()
+            .map_err(|_| host::__WASI_EOVERFLOW)?, // u64 doesn't fit into u32
+        st_size: metadata.len(),
+        st_atim: metadata
+            .accessed()
+            .map_err(convert_err)
+            .and_then(systemtime_to_timestamp)?,
+        st_ctim: metadata
+            .ctime()
+            .try_into()
+            .map_err(|_| host::__WASI_EOVERFLOW)?, // i64 doesn't fit into u64
+        st_mtim: metadata
+            .modified()
+            .map_err(convert_err)
+            .and_then(systemtime_to_timestamp)?,
+        st_filetype: filetype(&metadata),
+    })
 }
 
-pub(crate) fn device_id(_file: &File, metadata: &Metadata) -> io::Result<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Ok(metadata.dev())
-}
-
-pub(crate) fn file_serial_no(_file: &File, metadata: &Metadata) -> io::Result<u64> {
-    use std::os::unix::fs::MetadataExt;
-    Ok(metadata.ino())
-}
-
-pub(crate) fn filetype(metadata: &Metadata) -> io::Result<host::__wasi_filetype_t> {
+fn filetype(metadata: &Metadata) -> host::__wasi_filetype_t {
     use std::os::unix::fs::FileTypeExt;
     let ftype = metadata.file_type();
-    let ret = if ftype.is_file() {
+    if ftype.is_file() {
         host::__WASI_FILETYPE_REGULAR_FILE
     } else if ftype.is_dir() {
         host::__WASI_FILETYPE_DIRECTORY
@@ -391,14 +411,7 @@ pub(crate) fn filetype(metadata: &Metadata) -> io::Result<host::__wasi_filetype_
         host::__WASI_FILETYPE_SOCKET_STREAM
     } else {
         host::__WASI_FILETYPE_UNKNOWN
-    };
-
-    Ok(ret)
-}
-
-pub(crate) fn change_time(_file: &File, metadata: &Metadata) -> io::Result<i64> {
-    use std::os::unix::fs::MetadataExt;
-    Ok(metadata.ctime())
+    }
 }
 
 pub(crate) fn fd_filestat_set_times(
