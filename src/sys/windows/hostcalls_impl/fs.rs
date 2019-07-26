@@ -4,7 +4,7 @@ use super::fs_helpers::*;
 use crate::ctx::WasiCtx;
 use crate::fdentry::FdEntry;
 use crate::helpers::systemtime_to_timestamp;
-use crate::sys::errno_from_host;
+use crate::sys::{errno_from_ioerror, errno_from_host};
 use crate::sys::fdentry_impl::determine_type_rights;
 use crate::sys::host_impl;
 use crate::{host, Result};
@@ -196,33 +196,28 @@ pub(crate) fn change_time(file: &File, _metadata: &Metadata) -> io::Result<i64> 
 }
 
 pub(crate) fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t> {
-    fn convert_err(e: io::Error) -> host::__wasi_errno_t {
-        log::debug!("fd_filestat_get: os error: {}", e);
-        e.raw_os_error().map_or(host::__WASI_EIO, errno_from_host)
-    }
-
-    let metadata = file.metadata().map_err(convert_err)?;
+    let metadata = file.metadata().map_err(errno_from_ioerror)?;
     Ok(host::__wasi_filestat_t {
-        st_dev: device_id(file, &metadata).map_err(convert_err)?,
-        st_ino: file_serial_no(file, &metadata).map_err(convert_err)?,
+        st_dev: device_id(file, &metadata).map_err(errno_from_ioerror)?,
+        st_ino: file_serial_no(file, &metadata).map_err(errno_from_ioerror)?,
         st_nlink: num_hardlinks(file, &metadata)
-            .map_err(convert_err)?
+            .map_err(errno_from_ioerror)?
             .try_into()
             .map_err(|_| host::__WASI_EOVERFLOW)?, // u64 doesn't fit into u32
         st_size: metadata.len(),
         st_atim: metadata
             .accessed()
-            .map_err(convert_err)
+            .map_err(errno_from_ioerror)
             .and_then(systemtime_to_timestamp)?,
         st_ctim: change_time(file, &metadata)
-            .map_err(convert_err)?
+            .map_err(errno_from_ioerror)?
             .try_into()
             .map_err(|_| host::__WASI_EOVERFLOW)?, // i64 doesn't fit into u64
         st_mtim: metadata
             .modified()
-            .map_err(convert_err)
+            .map_err(errno_from_ioerror)
             .and_then(systemtime_to_timestamp)?,
-        st_filetype: filetype(&metadata).map_err(convert_err)?,
+        st_filetype: filetype(&metadata).map_err(errno_from_ioerror)?,
     })
 }
 
