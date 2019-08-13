@@ -872,6 +872,15 @@ pub(crate) fn path_filestat_set_times(
         fst_flags
     );
 
+    let set_atim = fst_flags & host::__WASI_FILESTAT_SET_ATIM != 0;
+    let set_atim_now = fst_flags & host::__WASI_FILESTAT_SET_ATIM_NOW != 0;
+    let set_mtim = fst_flags & host::__WASI_FILESTAT_SET_MTIM != 0;
+    let set_mtim_now = fst_flags & host::__WASI_FILESTAT_SET_MTIM_NOW != 0;
+
+    if (set_atim && set_atim_now) || (set_mtim && set_mtim_now) {
+        return Err(host::__WASI_EINVAL);
+    }
+
     let dirfd = dec_fd(dirfd);
     let dirflags = dec_lookupflags(dirflags);
     let path = dec_slice_of::<u8>(memory, path_ptr, path_len).and_then(host::path_from_slice)?;
