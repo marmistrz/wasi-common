@@ -391,6 +391,15 @@ pub(crate) fn path_filestat_set_times(
 ) -> Result<()> {
     use nix::sys::time::{TimeSpec, TimeValLike};
 
+    let set_atim = fst_flags & host::__WASI_FILESTAT_SET_ATIM != 0;
+    let set_atim_now = fst_flags & host::__WASI_FILESTAT_SET_ATIM_NOW != 0;
+    let set_mtim = fst_flags & host::__WASI_FILESTAT_SET_MTIM != 0;
+    let set_mtim_now = fst_flags & host::__WASI_FILESTAT_SET_MTIM_NOW != 0;
+
+    if (set_atim && set_atim_now) || (set_mtim && set_mtim_now) {
+        return Err(host::__WASI_EINVAL);
+    }
+
     let atflags = match dirflags {
         wasm32::__WASI_LOOKUP_SYMLINK_FOLLOW => 0,
         _ => libc::AT_SYMLINK_NOFOLLOW,
