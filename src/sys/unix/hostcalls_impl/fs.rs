@@ -9,7 +9,7 @@ use crate::{host, wasm32, Result};
 use nix::libc::{self, c_long, c_void};
 use std::convert::TryInto;
 use std::ffi::CString;
-use std::fs::{File, Metadata};
+use std::fs::{File, FileType, Metadata};
 use std::os::unix::fs::FileExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd};
 
@@ -368,6 +368,26 @@ fn filetype(file: &File, metadata: &Metadata) -> Result<host::__wasi_filetype_t>
         }
     } else {
         Ok(host::__WASI_FILETYPE_UNKNOWN)
+    }
+}
+
+pub(crate) fn filetype_from_std(ftype: &FileType) -> host::__wasi_filetype_t {
+    // It's impossible to determine the socket type from std::fs::FileType,
+    // so this function is mostly the same as the one above, but
+    // returns __WASI_FILETYPE_UNKNOWN for sockets
+    use std::os::unix::fs::FileTypeExt;
+    if ftype.is_file() {
+        host::__WASI_FILETYPE_REGULAR_FILE
+    } else if ftype.is_dir() {
+        host::__WASI_FILETYPE_DIRECTORY
+    } else if ftype.is_symlink() {
+        host::__WASI_FILETYPE_SYMBOLIC_LINK
+    } else if ftype.is_char_device() {
+        host::__WASI_FILETYPE_CHARACTER_DEVICE
+    } else if ftype.is_block_device() {
+        host::__WASI_FILETYPE_BLOCK_DEVICE
+    } else {
+        host::__WASI_FILETYPE_UNKNOWN
     }
 }
 

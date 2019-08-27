@@ -9,6 +9,8 @@ use crate::sys::{errno_from_ioerror, host_impl, hostcalls_impl};
 use crate::{host, wasm32, Result};
 use filetime::{set_file_handle_times, FileTime};
 use log::trace;
+use std::mem;
+use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -1062,4 +1064,43 @@ pub(crate) fn fd_prestat_dir_name(
 
             enc_slice_of(memory, path.as_bytes(), path_ptr)
         })
+}
+
+struct Dirent {
+    name: String,
+    ftype: std::fs::FileType,
+    ino: u64,
+}
+
+impl Dirent {
+    fn to_raw(&self) -> Result<Vec<u8>> {
+        use std::slice;
+        use crate::sys::hostcalls_impl::filetype_from_std;
+
+        let name = self.name.as_bytes();
+        let namlen = name.len();
+        let dirent_size = mem::size_of::<host::__wasi_dirent_t>();
+        let offset = dirent_size
+            .checked_add(namlen)
+            .ok_or(host::__WASI_EOVERFLOW)?;
+
+        let mut raw = Vec::<u8>::with_capacity(offset);
+        raw.truncate(offset);
+
+        let sys_dirent = raw.as_mut_ptr() as *mut host::__wasi_dirent_t;
+        unsafe {
+            *sys_dirent = host::__wasi_dirent_t {
+                d_namlen: namlen.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
+                d_ino: self.ino,
+                d_next: offset.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
+                d_type: filetype_from_std(&self.ftype).map_err(errno_from_ioerror)?,
+            };
+        }
+
+        let sys_name = unsafe { sys_dirent.offset(1) as *mut u8 };
+        let sys_name = unsafe { slice::from_raw_parts_mut(sys_name, namlen) };
+        sys_name.copy_from_slice(&name);
+
+        Ok(raw)
+    }
 }

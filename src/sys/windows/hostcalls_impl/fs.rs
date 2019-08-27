@@ -13,9 +13,11 @@ use crate::{host, Result};
 use std::convert::TryInto;
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
+use std::mem;
 use std::os::windows::fs::{FileExt, OpenOptionsExt};
 use std::os::windows::prelude::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
+use std::slice;
 
 fn read_at(mut file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     // get current cursor position
@@ -157,10 +159,38 @@ pub(crate) fn path_open(
 
 pub(crate) fn fd_readdir(
     fd: &File,
-    host_buf: &mut [u8],
+    mut host_buf: &mut [u8],
     cookie: host::__wasi_dircookie_t,
 ) -> Result<usize> {
-    unimplemented!("fd_readdir")
+    use host_impl::path_from_host;
+    use winx::file::get_path_by_handle;
+
+    assert_eq!(cookie, 0, "non-zero cookie not supported yet!!");
+    let path = get_path_by_handle(fd.as_raw_handle()).map_err(host_impl::errno_from_win)?;
+    let readdir = Path::new(&path).read_dir().map_err(errno_from_ioerror)?;
+
+    // The code from now on could be mostly reused on Linux, but ReadDir implementation
+    // requires us to have a root Path
+    let mut used = 0;
+    for dir in readdir {
+        let dir: std::fs::DirEntry = dir.map_err(errno_from_ioerror)?;
+
+        let name = dir.file_name();
+        let dirent = Dirent {
+            name: path_from_host(dir.file_name())?,
+            ftype: dir.file_type().map_err(errno_from_ioerror)?,
+            ino: File::open(dir.path())
+                .and_then(|f| file_serial_no(&f))
+                .map_err(errno_from_ioerror)?,
+        };
+        let dirent_raw = dirent.to_raw()?;
+        let offset = dirent_raw.len();
+        host_buf[0..offset].copy_from_slice(&dirent_raw);
+        used += offset;
+        host_buf = &mut host_buf[offset..];
+    }
+
+    Ok(used)
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {
@@ -246,15 +276,15 @@ pub(crate) fn path_rename(resolved_old: PathGet, resolved_new: PathGet) -> Resul
     })
 }
 
-pub(crate) fn num_hardlinks(file: &File, _metadata: &Metadata) -> io::Result<u64> {
+pub(crate) fn num_hardlinks(file: &File) -> io::Result<u64> {
     Ok(winx::file::get_fileinfo(file)?.nNumberOfLinks.into())
 }
 
-pub(crate) fn device_id(file: &File, _metadata: &Metadata) -> io::Result<u64> {
+pub(crate) fn device_id(file: &File) -> io::Result<u64> {
     Ok(winx::file::get_fileinfo(file)?.dwVolumeSerialNumber.into())
 }
 
-pub(crate) fn file_serial_no(file: &File, _metadata: &Metadata) -> io::Result<u64> {
+pub(crate) fn file_serial_no(file: &File) -> io::Result<u64> {
     let info = winx::file::get_fileinfo(file)?;
     let high = info.nFileIndexHigh;
     let low = info.nFileIndexLow;
@@ -269,9 +299,9 @@ pub(crate) fn change_time(file: &File, _metadata: &Metadata) -> io::Result<i64> 
 pub(crate) fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_filestat_t> {
     let metadata = file.metadata().map_err(errno_from_ioerror)?;
     Ok(host::__wasi_filestat_t {
-        st_dev: device_id(file, &metadata).map_err(errno_from_ioerror)?,
-        st_ino: file_serial_no(file, &metadata).map_err(errno_from_ioerror)?,
-        st_nlink: num_hardlinks(file, &metadata)
+        st_dev: device_id(file).map_err(errno_from_ioerror)?,
+        st_ino: file_serial_no(file).map_err(errno_from_ioerror)?,
+        st_nlink: num_hardlinks(file)
             .map_err(errno_from_ioerror)?
             .try_into()
             .map_err(|_| host::__WASI_EOVERFLOW)?, // u64 doesn't fit into u32
