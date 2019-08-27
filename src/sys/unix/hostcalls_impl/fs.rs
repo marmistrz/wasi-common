@@ -344,8 +344,8 @@ pub(crate) fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_
 }
 
 fn filetype(file: &File, metadata: &Metadata) -> Result<host::__wasi_filetype_t> {
-    use std::os::unix::fs::FileTypeExt;
     use nix::sys::socket::{self, SockType};
+    use std::os::unix::fs::FileTypeExt;
     let ftype = metadata.file_type();
     if ftype.is_file() {
         Ok(host::__WASI_FILETYPE_REGULAR_FILE)
@@ -357,15 +357,15 @@ fn filetype(file: &File, metadata: &Metadata) -> Result<host::__wasi_filetype_t>
         Ok(host::__WASI_FILETYPE_CHARACTER_DEVICE)
     } else if ftype.is_block_device() {
         Ok(host::__WASI_FILETYPE_BLOCK_DEVICE)
-    } else if ftype.is_fifo() {
-        Ok(host::__WASI_FILETYPE_SOCKET_STREAM)
     } else if ftype.is_socket() {
-        match socket::getsockopt(file.as_raw_fd(), socket::sockopt::SockType).map_err(|err|
-            err.as_errno().unwrap()).map_err(host_impl::errno_from_nix)? {
-                SockType::Datagram => Ok(host::__WASI_FILETYPE_SOCKET_DGRAM),
-                SockType::Stream => Ok(host::__WASI_FILETYPE_SOCKET_STREAM),
-                _ => Ok(host::__WASI_FILETYPE_UNKNOWN),
-            }
+        match socket::getsockopt(file.as_raw_fd(), socket::sockopt::SockType)
+            .map_err(|err| err.as_errno().unwrap())
+            .map_err(host_impl::errno_from_nix)?
+        {
+            SockType::Datagram => Ok(host::__WASI_FILETYPE_SOCKET_DGRAM),
+            SockType::Stream => Ok(host::__WASI_FILETYPE_SOCKET_STREAM),
+            _ => Ok(host::__WASI_FILETYPE_UNKNOWN),
+        }
     } else {
         Ok(host::__WASI_FILETYPE_UNKNOWN)
     }
