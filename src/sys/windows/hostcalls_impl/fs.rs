@@ -160,6 +160,7 @@ pub(crate) fn path_open(
 
 fn dirent_from_path<P: AsRef<Path>>(
     path: P,
+    cookie: host::__wasi_dircookie_t,
 ) -> io::Result<Dirent> {
     let file = File::open(path)?;
     let ty = file.metadata()?.file_type();
@@ -175,12 +176,21 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     use host_impl::path_from_host;
     use winx::file::get_path_by_handle;
 
+    // TODO document caveats and the order assumptions
+
     let path = get_path_by_handle(fd.as_raw_handle()).map_err(host_impl::errno_from_win)?;
+    // std::fs::ReadDir doesn't return . and .., so we need to emulate it
     let path = Path::new(&path);
+    // The directory /.. is the same as / on Unix, so emulate this behavior too
+    let parent = path.parent().unwrap_or(path);
+
+    let dot = dirent_from_path(path, 1).map_err(errno_from_ioerror)?;
+    let dotdot = dirent_from_path(parent, 2).map_err(errno_from_ioerror)?;
     let iter = path
         .read_dir()
         .map_err(errno_from_ioerror)?
-        .map(|dir| {
+        .zip(3..)
+        .map(|(dir, no)| {
             let dir: std::fs::DirEntry = dir.map_err(errno_from_ioerror)?;
 
             Ok(Dirent {
@@ -189,20 +199,17 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
                 ino: File::open(dir.path())
                     .and_then(|f| file_serial_no(&f))
                     .map_err(errno_from_ioerror)?,
-                cookie: 0, // will be set later on
+                cookie: no,
             })
         });
-    let dot: Dirent = dirent_from_path(path).map_err(errno_from_ioerror)?;
-    // Linux
-    let dotdot: Dirent = match path.parent() {
-        Some(par) => dirent_from_path(par).map_err(errno_from_ioerror)?,
-        None => dot.clone()
-    };
-    vec![dot, dotdot].into_iter().map(Ok).chain(iter).collect()
 
-    // The code from now on could be mostly reused on Linux, but ReadDir implementation
-    // requires us to have a root Path
-    /**/
+    // into_iter for arrays is broken and returns references instead of values,
+    // so we need to use a Vec
+    let iter = vec![dot, dotdot].into_iter().map(Ok).chain(iter);
+
+    // Emulate seekdir(). This may give O(n^2) TODO explain why
+    // TODO explain why it's the least evil
+    iter.skip(cookie as usize).collect() //fixme cast
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {
