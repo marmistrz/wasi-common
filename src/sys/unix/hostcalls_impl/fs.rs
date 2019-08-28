@@ -2,7 +2,7 @@
 #![allow(unused_unsafe)]
 use super::fs_helpers::*;
 use crate::helpers::systemtime_to_timestamp;
-use crate::hostcalls_impl::PathGet;
+use crate::hostcalls_impl::{Dirent, PathGet};
 use crate::sys::errno_from_ioerror;
 use crate::sys::host_impl;
 use crate::{host, wasm32, Result};
@@ -212,8 +212,15 @@ pub(crate) fn fd_readdir(
     fd: &File,
     host_buf: &mut [u8],
     cookie: host::__wasi_dircookie_t,
-) -> Result<usize> {
-    use libc::{dirent, fdopendir, memcpy, readdir_r, seekdir};
+) -> Result<Vec<Dirent>> {
+    use nix::dir::{Dir, Entry};
+    use std::mem::ManuallyDrop;
+    // Dir executes closedir() on drop, which closes the file descriptor,
+    // which is undesired for us, so we will never drop the DIR*
+    let dir = ManuallyDrop::new(Dir::from_fd(fd.as_raw_fd()));
+    Ok(vec![])
+
+    /*use libc::{dirent, fdopendir, memcpy, readdir_r, seekdir};
 
     let host_buf_ptr = host_buf.as_mut_ptr();
     let host_buf_len = host_buf.len();
@@ -259,7 +266,7 @@ pub(crate) fn fd_readdir(
         host_buf_offset += name_len;
         left -= required_space;
     }
-    Ok(host_buf_len - left)
+    Ok(host_buf_len - left)*/
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {

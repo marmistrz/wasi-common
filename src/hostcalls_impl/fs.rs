@@ -9,10 +9,10 @@ use crate::sys::{errno_from_ioerror, host_impl, hostcalls_impl};
 use crate::{host, wasm32, Result};
 use filetime::{set_file_handle_times, FileTime};
 use log::trace;
-use std::mem;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::mem;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) fn fd_close(wasi_ctx: &mut WasiCtx, fd: wasm32::__wasi_fd_t) -> Result<()> {
@@ -624,17 +624,24 @@ pub(crate) fn fd_readdir(
         .get_fd_entry(fd, host::__WASI_RIGHT_FD_READDIR, 0)
         .and_then(|fe| fe.fd_object.descriptor.as_file())?;
 
-    let host_buf = dec_slice_of_mut::<u8>(memory, buf, buf_len)?;
+    let mut host_buf = dec_slice_of_mut::<u8>(memory, buf, buf_len)?;
 
     trace!("     | (buf,buf_len)={:?}", host_buf);
 
     let cookie = dec_dircookie(cookie);
 
-    let host_bufused = hostcalls_impl::fd_readdir(fd, host_buf, cookie)?;
+    let iter = hostcalls_impl::fd_readdir(fd, host_buf, cookie)?;
+    let mut used = 0;
+    for dirent in iter {
+        let dirent_raw = dirent.to_raw()?;
+        let offset = dirent_raw.len();
+        host_buf[0..offset].copy_from_slice(&dirent_raw);
+        used += offset;
+        host_buf = &mut host_buf[offset..];
+    }
 
-    trace!("     | *buf_used={:?}", host_bufused);
-
-    enc_usize_byref(memory, buf_used, host_bufused)
+    trace!("     | *buf_used={:?}", used);
+    enc_usize_byref(memory, buf_used, used)
 }
 
 pub(crate) fn path_readlink(
@@ -1066,16 +1073,16 @@ pub(crate) fn fd_prestat_dir_name(
         })
 }
 
-struct Dirent {
-    name: String,
-    ftype: std::fs::FileType,
-    ino: u64,
+pub(crate) struct Dirent {
+    pub name: String,
+    pub ftype: std::fs::FileType,
+    pub ino: u64,
 }
 
 impl Dirent {
-    fn to_raw(&self) -> Result<Vec<u8>> {
-        use std::slice;
+    pub fn to_raw(&self) -> Result<Vec<u8>> {
         use crate::sys::hostcalls_impl::filetype_from_std;
+        use std::slice;
 
         let name = self.name.as_bytes();
         let namlen = name.len();
@@ -1093,7 +1100,7 @@ impl Dirent {
                 d_namlen: namlen.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
                 d_ino: self.ino,
                 d_next: offset.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
-                d_type: filetype_from_std(&self.ftype).map_err(errno_from_ioerror)?,
+                d_type: filetype_from_std(&self.ftype),
             };
         }
 
