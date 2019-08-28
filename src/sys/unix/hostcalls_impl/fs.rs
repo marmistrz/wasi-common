@@ -257,8 +257,8 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
             Ok(Dirent {
                 name: dir.file_name().to_string_lossy().into_owned(), // fixme utf8
                 ino: dir.ino(),
-                ftype: filetype_from_nixdir(dir.file_type()),
-                cookie: dir.seek_loc(),
+                ftype: filetype_from_nixdir(dir.file_type()), // fixme use From<_>
+                cookie: dir.seek_loc().to_raw() as u64, // fixme cast
             })
         })
         .collect()

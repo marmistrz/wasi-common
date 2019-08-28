@@ -158,28 +158,47 @@ pub(crate) fn path_open(
         .map_err(errno_from_ioerror)
 }
 
+fn dirent_from_path<P: AsRef<Path>>(
+    path: P,
+) -> io::Result<Dirent> {
+    let file = File::open(path)?;
+    let ty = file.metadata()?.file_type();
+    Ok(Dirent {
+        ftype: filetype_from_std(&ty),
+        name: String::new(),
+        cookie: 0,
+        ino: file_serial_no(&file)?,
+    })
+}
+
 pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
     use host_impl::path_from_host;
     use winx::file::get_path_by_handle;
 
-    assert_eq!(cookie, 0, "non-zero cookie not supported yet!!");
     let path = get_path_by_handle(fd.as_raw_handle()).map_err(host_impl::errno_from_win)?;
-    Path::new(&path)
+    let path = Path::new(&path);
+    let iter = path
         .read_dir()
         .map_err(errno_from_ioerror)?
         .map(|dir| {
             let dir: std::fs::DirEntry = dir.map_err(errno_from_ioerror)?;
 
-            let name = dir.file_name();
             Ok(Dirent {
                 name: path_from_host(dir.file_name())?,
                 ftype: filetype_from_std(&dir.file_type().map_err(errno_from_ioerror)?),
                 ino: File::open(dir.path())
                     .and_then(|f| file_serial_no(&f))
                     .map_err(errno_from_ioerror)?,
+                cookie: 0, // will be set later on
             })
-        })
-        .collect()
+        });
+    let dot: Dirent = dirent_from_path(path).map_err(errno_from_ioerror)?;
+    // Linux
+    let dotdot: Dirent = match path.parent() {
+        Some(par) => dirent_from_path(par).map_err(errno_from_ioerror)?,
+        None => dot.clone()
+    };
+    vec![dot, dotdot].into_iter().map(Ok).chain(iter).collect()
 
     // The code from now on could be mostly reused on Linux, but ReadDir implementation
     // requires us to have a root Path

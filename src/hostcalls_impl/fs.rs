@@ -1093,12 +1093,12 @@ impl FileType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Dirent {
     pub name: String,
     pub ftype: FileType,
     pub ino: u64,
-    pub cookie: nix::dir::SeekLoc,
+    pub cookie: host::__wasi_dircookie_t,
 }
 
 impl Dirent {
@@ -1120,7 +1120,7 @@ impl Dirent {
             *sys_dirent = host::__wasi_dirent_t {
                 d_namlen: namlen.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
                 d_ino: self.ino,
-                d_next: self.cookie.to_raw() as u64, // fixme cast
+                d_next: self.cookie, // fixme cast
                 d_type: self.ftype.to_wasi(),
             };
         }
