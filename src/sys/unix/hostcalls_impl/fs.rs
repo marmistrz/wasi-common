@@ -6,7 +6,7 @@ use crate::hostcalls_impl::{Dirent, FileType, PathGet};
 use crate::sys::errno_from_ioerror;
 use crate::sys::host_impl::{self, errno_from_nixerror};
 use crate::{host, wasm32, Result};
-use log::{debug, trace};
+use log::trace;
 use nix::libc;
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -228,9 +228,8 @@ fn filetype_from_nixdir(t: Option<nix::dir::Type>) -> FileType {
 pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
     use nix::dir::{Dir, Entry, SeekLoc};
     // We need to duplicate the fd, because `opendir(3)`:
-    //     After a successful call to fdopendir(),  fd  is  used
-    //     internally by the implementation, and should not otherwise
-    //     be used by the application.
+    //     After a successful call to fdopendir(), fd is used internally by the implementation,
+    //     and should not otherwise be used by the application.
     // `opendir(3p)` also says that it's undefined behavior to
     // modify the state of the fd in a different way than by accessing DIR*.
     //
@@ -239,26 +238,41 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     let fd = fd.try_clone().map_err(errno_from_ioerror)?;
     let mut dir = Dir::from(fd).map_err(errno_from_nixerror)?;
 
-    // Seek if needed.
+    // Seek if needed. Unless cookie is host::__WASI_DIRCOOKIE_START,
+    // new items may not be returned to the caller.
+    //
+    // According to `opendir(3p)`:
+    //     If a file is removed from or added to the directory after the most recent call
+    //     to opendir() or rewinddir(), whether a subsequent call to readdir() returns an entry
+    //     for that file is unspecified.
     if cookie == host::__WASI_DIRCOOKIE_START {
         trace!("     | fd_readdir: doing rewinddir");
         dir.rewind();
     } else {
-        // FIXME unsafe cast
         trace!("     | fd_readdir: doing seekdir to {}", cookie);
         let loc = unsafe { SeekLoc::from_raw(cookie as i64) };
         dir.seek(loc);
     }
-    // FIXME this will call rewinddir when dropped, which is bad for
-    // performance
+
+    // TODO nix::dir::Iter calls rewinddir in drop(), but we can't use
+    // ManuallyDrop because moving out of borrowed context
+    // Should we just add an option in nix not to rewind at the end??
     dir.iter()
         .map(|dir| {
             let dir: Entry = dir.map_err(errno_from_nixerror)?;
             Ok(Dirent {
-                name: dir.file_name().to_string_lossy().into_owned(), // fixme utf8
+                name: dir // TODO can we reuse path_from_host for CStr?
+                    .file_name()
+                    .to_str()
+                    .map_err(|_| host::__WASI_EILSEQ)?
+                    .to_owned(),
                 ino: dir.ino(),
-                ftype: filetype_from_nixdir(dir.file_type()), // fixme use From<_>
-                cookie: dir.seek_loc().to_raw() as u64, // fixme cast
+                ftype: filetype_from_nixdir(dir.file_type()), // TODO use From<_> conversions
+                cookie: dir
+                    .seek_loc()
+                    .to_raw()
+                    .try_into()
+                    .map_err(|_| host::__WASI_EOVERFLOW)?,
             })
         })
         .collect()

@@ -177,7 +177,7 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     use winx::file::get_path_by_handle;
 
     // TODO document caveats and the order assumptions
-
+    let cookie = cookie.try_into().map_err(|_| host::__WASI_EOVERFLOW)?;
     let path = get_path_by_handle(fd.as_raw_handle()).map_err(host_impl::errno_from_win)?;
     // std::fs::ReadDir doesn't return . and .., so we need to emulate it
     let path = Path::new(&path);
@@ -209,7 +209,7 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
 
     // Emulate seekdir(). This may give O(n^2) TODO explain why
     // TODO explain why it's the least evil
-    iter.skip(cookie as usize).collect() //fixme cast
+    iter.skip(cookie).collect() //fixme cast
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {

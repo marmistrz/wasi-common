@@ -1120,7 +1120,7 @@ impl Dirent {
             *sys_dirent = host::__wasi_dirent_t {
                 d_namlen: namlen.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
                 d_ino: self.ino,
-                d_next: self.cookie, // fixme cast
+                d_next: self.cookie,
                 d_type: self.ftype.to_wasi(),
             };
         }
