@@ -2,14 +2,15 @@
 #![allow(unused_unsafe)]
 use super::fs_helpers::*;
 use crate::helpers::systemtime_to_timestamp;
-use crate::hostcalls_impl::{Dirent, PathGet};
+use crate::hostcalls_impl::{Dirent, FileType, PathGet};
 use crate::sys::errno_from_ioerror;
-use crate::sys::host_impl;
+use crate::sys::host_impl::{self, errno_from_nixerror};
 use crate::{host, wasm32, Result};
-use nix::libc::{self, c_long, c_void};
+use log::{debug, trace};
+use nix::libc;
 use std::convert::TryInto;
 use std::ffi::CString;
-use std::fs::{File, FileType, Metadata};
+use std::fs::{File, Metadata};
 use std::os::unix::fs::FileExt;
 use std::os::unix::prelude::{AsRawFd, FromRawFd};
 
@@ -208,65 +209,59 @@ pub(crate) fn path_open(
     Ok(unsafe { File::from_raw_fd(new_fd) })
 }
 
-pub(crate) fn fd_readdir(
-    fd: &File,
-    host_buf: &mut [u8],
-    cookie: host::__wasi_dircookie_t,
-) -> Result<Vec<Dirent>> {
-    use nix::dir::{Dir, Entry};
-    use std::mem::ManuallyDrop;
-    // Dir executes closedir() on drop, which closes the file descriptor,
-    // which is undesired for us, so we will never drop the DIR*
-    let dir = ManuallyDrop::new(Dir::from_fd(fd.as_raw_fd()));
-    Ok(vec![])
+fn filetype_from_nixdir(t: Option<nix::dir::Type>) -> FileType {
+    use nix::dir::Type;
+    let t = match t {
+        Some(t) => t,
+        None => return FileType::Unknown,
+    };
+    match t {
+        Type::BlockDevice => FileType::BlockDevice,
+        Type::CharacterDevice => FileType::CharacterDevice,
+        Type::Directory => FileType::Directory,
+        Type::File => FileType::RegularFile,
+        Type::Symlink => FileType::Symlink,
+        _ => FileType::Unknown,
+    }
+}
 
-    /*use libc::{dirent, fdopendir, memcpy, readdir_r, seekdir};
+pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
+    use nix::dir::{Dir, Entry, SeekLoc};
+    // We need to duplicate the fd, because `opendir(3)`:
+    //     After a successful call to fdopendir(),  fd  is  used
+    //     internally by the implementation, and should not otherwise
+    //     be used by the application.
+    // `opendir(3p)` also says that it's undefined behavior to
+    // modify the state of the fd in a different way than by accessing DIR*.
+    //
+    // Still, rewinddir will be needed because the two file descriptors
+    // share progress. But we can safely execute closedir now.
+    let fd = fd.try_clone().map_err(errno_from_ioerror)?;
+    let mut dir = Dir::from(fd).map_err(errno_from_nixerror)?;
 
-    let host_buf_ptr = host_buf.as_mut_ptr();
-    let host_buf_len = host_buf.len();
-    let dir = unsafe { fdopendir(fd.as_raw_fd()) };
-    if dir.is_null() {
-        return Err(host_impl::errno_from_nix(nix::errno::Errno::last()));
+    // Seek if needed.
+    if cookie == host::__WASI_DIRCOOKIE_START {
+        trace!("     | fd_readdir: doing rewinddir");
+        dir.rewind();
+    } else {
+        // FIXME unsafe cast
+        trace!("     | fd_readdir: doing seekdir to {}", cookie);
+        let loc = unsafe { SeekLoc::from_raw(cookie as i64) };
+        dir.seek(loc);
     }
-    if cookie != wasm32::__WASI_DIRCOOKIE_START {
-        unsafe { seekdir(dir, cookie as c_long) };
-    }
-    let mut entry_buf = unsafe { std::mem::uninitialized::<dirent>() };
-    let mut left = host_buf_len;
-    let mut host_buf_offset: usize = 0;
-    while left > 0 {
-        let mut host_entry: *mut dirent = std::ptr::null_mut();
-        let res = unsafe { readdir_r(dir, &mut entry_buf, &mut host_entry) };
-        if res == -1 {
-            return Err(host_impl::errno_from_nix(nix::errno::Errno::last()));
-        }
-        if host_entry.is_null() {
-            break;
-        }
-        let entry: wasm32::__wasi_dirent_t = host_impl::dirent_from_host(&unsafe { *host_entry })?;
-        let name_len = entry.d_namlen as usize;
-        let required_space = std::mem::size_of_val(&entry) + name_len;
-        if required_space > left {
-            break;
-        }
-        unsafe {
-            let ptr = host_buf_ptr.offset(host_buf_offset as isize) as *mut c_void
-                as *mut wasm32::__wasi_dirent_t;
-            *ptr = entry;
-        }
-        host_buf_offset += std::mem::size_of_val(&entry);
-        let name_ptr = unsafe { *host_entry }.d_name.as_ptr();
-        unsafe {
-            memcpy(
-                host_buf_ptr.offset(host_buf_offset as isize) as *mut _,
-                name_ptr as *const _,
-                name_len,
-            )
-        };
-        host_buf_offset += name_len;
-        left -= required_space;
-    }
-    Ok(host_buf_len - left)*/
+    // FIXME this will call rewinddir when dropped, which is bad for
+    // performance
+    dir.iter()
+        .map(|dir| {
+            let dir: Entry = dir.map_err(errno_from_nixerror)?;
+            Ok(Dirent {
+                name: dir.file_name().to_string_lossy().into_owned(), // fixme utf8
+                ino: dir.ino(),
+                ftype: filetype_from_nixdir(dir.file_type()),
+                cookie: dir.seek_loc(),
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {
@@ -375,26 +370,6 @@ fn filetype(file: &File, metadata: &Metadata) -> Result<host::__wasi_filetype_t>
         }
     } else {
         Ok(host::__WASI_FILETYPE_UNKNOWN)
-    }
-}
-
-pub(crate) fn filetype_from_std(ftype: &FileType) -> host::__wasi_filetype_t {
-    // It's impossible to determine the socket type from std::fs::FileType,
-    // so this function is mostly the same as the one above, but
-    // returns __WASI_FILETYPE_UNKNOWN for sockets
-    use std::os::unix::fs::FileTypeExt;
-    if ftype.is_file() {
-        host::__WASI_FILETYPE_REGULAR_FILE
-    } else if ftype.is_dir() {
-        host::__WASI_FILETYPE_DIRECTORY
-    } else if ftype.is_symlink() {
-        host::__WASI_FILETYPE_SYMBOLIC_LINK
-    } else if ftype.is_char_device() {
-        host::__WASI_FILETYPE_CHARACTER_DEVICE
-    } else if ftype.is_block_device() {
-        host::__WASI_FILETYPE_BLOCK_DEVICE
-    } else {
-        host::__WASI_FILETYPE_UNKNOWN
     }
 }
 

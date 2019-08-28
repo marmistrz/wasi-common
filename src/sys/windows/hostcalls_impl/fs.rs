@@ -4,15 +4,15 @@ use super::fs_helpers::*;
 use crate::ctx::WasiCtx;
 use crate::fdentry::FdEntry;
 use crate::helpers::systemtime_to_timestamp;
-use crate::hostcalls_impl::Dirent;
 use crate::hostcalls_impl::{fd_filestat_set_times_impl, PathGet};
+use crate::hostcalls_impl::{Dirent, FileType};
 use crate::sys::fdentry_impl::determine_type_rights;
 use crate::sys::host_impl;
 use crate::sys::hostcalls_impl::fs_helpers::PathGetExt;
 use crate::sys::{errno_from_host, errno_from_ioerror};
 use crate::{host, Result};
 use std::convert::TryInto;
-use std::fs::{File, FileType, Metadata, OpenOptions};
+use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
 use std::mem;
 use std::os::windows::fs::{FileExt, OpenOptionsExt};
@@ -158,11 +158,7 @@ pub(crate) fn path_open(
         .map_err(errno_from_ioerror)
 }
 
-pub(crate) fn fd_readdir(
-    fd: &File,
-    mut host_buf: &mut [u8],
-    cookie: host::__wasi_dircookie_t,
-) -> Result<Vec<Dirent>> {
+pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
     use host_impl::path_from_host;
     use winx::file::get_path_by_handle;
 
@@ -177,7 +173,7 @@ pub(crate) fn fd_readdir(
             let name = dir.file_name();
             Ok(Dirent {
                 name: path_from_host(dir.file_name())?,
-                ftype: dir.file_type().map_err(errno_from_ioerror)?,
+                ftype: filetype_from_std(&dir.file_type().map_err(errno_from_ioerror)?),
                 ino: File::open(dir.path())
                     .and_then(|f| file_serial_no(&f))
                     .map_err(errno_from_ioerror)?,
@@ -315,19 +311,19 @@ pub(crate) fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_
             .modified()
             .map_err(errno_from_ioerror)
             .and_then(systemtime_to_timestamp)?,
-        st_filetype: filetype_from_std(&metadata.file_type()),
+        st_filetype: filetype_from_std(&metadata.file_type()).to_wasi(),
     })
 }
 
-pub(crate) fn filetype_from_std(ftype: &FileType) -> host::__wasi_filetype_t {
+pub(crate) fn filetype_from_std(ftype: &std::fs::FileType) -> FileType {
     if ftype.is_file() {
-        host::__WASI_FILETYPE_REGULAR_FILE
+        FileType::RegularFile
     } else if ftype.is_dir() {
-        host::__WASI_FILETYPE_DIRECTORY
+        FileType::Directory
     } else if ftype.is_symlink() {
-        host::__WASI_FILETYPE_SYMBOLIC_LINK
+        FileType::Symlink
     } else {
-        host::__WASI_FILETYPE_UNKNOWN
+        FileType::Unknown
     }
 }
 

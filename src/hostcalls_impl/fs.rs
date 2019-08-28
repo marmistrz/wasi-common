@@ -8,7 +8,7 @@ use crate::sys::hostcalls_impl::fs_helpers::path_open_rights;
 use crate::sys::{errno_from_ioerror, host_impl, hostcalls_impl};
 use crate::{host, wasm32, Result};
 use filetime::{set_file_handle_times, FileTime};
-use log::trace;
+use log::{debug, trace};
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -626,13 +626,14 @@ pub(crate) fn fd_readdir(
 
     let mut host_buf = dec_slice_of_mut::<u8>(memory, buf, buf_len)?;
 
-    trace!("     | (buf,buf_len)={:?}", host_buf);
+    trace!("     | before: (buf,buf_len)={:?}", host_buf);
 
     let cookie = dec_dircookie(cookie);
 
-    let iter = hostcalls_impl::fd_readdir(fd, host_buf, cookie)?;
+    let vec = hostcalls_impl::fd_readdir(fd, cookie)?;
+    debug!("Received dirents: {:?}", vec);
     let mut used = 0;
-    for dirent in iter {
+    for dirent in vec {
         let dirent_raw = dirent.to_raw()?;
         let offset = dirent_raw.len();
         host_buf[0..offset].copy_from_slice(&dirent_raw);
@@ -1073,15 +1074,35 @@ pub(crate) fn fd_prestat_dir_name(
         })
 }
 
+#[allow(dead_code)] // trouble with sockets
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FileType {
+    Unknown = 0,
+    BlockDevice = 1,
+    CharacterDevice = 2,
+    Directory = 3,
+    RegularFile = 4,
+    SocketDgram = 5,
+    SocketStream = 6,
+    Symlink = 7,
+}
+
+impl FileType {
+    pub(crate) fn to_wasi(&self) -> host::__wasi_filetype_t {
+        *self as host::__wasi_filetype_t
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Dirent {
     pub name: String,
-    pub ftype: std::fs::FileType,
+    pub ftype: FileType,
     pub ino: u64,
+    pub cookie: nix::dir::SeekLoc,
 }
 
 impl Dirent {
     pub fn to_raw(&self) -> Result<Vec<u8>> {
-        use crate::sys::hostcalls_impl::filetype_from_std;
         use std::slice;
 
         let name = self.name.as_bytes();
@@ -1092,15 +1113,15 @@ impl Dirent {
             .ok_or(host::__WASI_EOVERFLOW)?;
 
         let mut raw = Vec::<u8>::with_capacity(offset);
-        raw.truncate(offset);
+        raw.resize(offset, 0);
 
         let sys_dirent = raw.as_mut_ptr() as *mut host::__wasi_dirent_t;
         unsafe {
             *sys_dirent = host::__wasi_dirent_t {
                 d_namlen: namlen.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
                 d_ino: self.ino,
-                d_next: offset.try_into().map_err(|_| host::__WASI_EOVERFLOW)?,
-                d_type: filetype_from_std(&self.ftype),
+                d_next: self.cookie.to_raw() as u64, // fixme cast
+                d_type: self.ftype.to_wasi(),
             };
         }
 

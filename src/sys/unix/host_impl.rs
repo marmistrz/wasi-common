@@ -86,6 +86,10 @@ pub(crate) fn errno_from_nix(errno: nix::errno::Errno) -> host::__wasi_errno_t {
     }
 }
 
+pub(crate) fn errno_from_nixerror(err: nix::Error) -> host::__wasi_errno_t {
+    err.as_errno().map_or(host::__WASI_ENOSYS, errno_from_nix)
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) const O_RSYNC: nix::fcntl::OFlag = nix::fcntl::OFlag::O_RSYNC;
 
