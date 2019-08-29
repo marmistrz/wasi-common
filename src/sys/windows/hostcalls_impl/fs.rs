@@ -20,6 +20,7 @@ use std::os::windows::fs::{FileExt, OpenOptionsExt};
 use std::os::windows::prelude::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 use std::slice;
+use winx::file::{AccessMode, Flags};
 
 fn read_at(mut file: &File, buf: &mut [u8], offset: u64) -> io::Result<usize> {
     // get current cursor position
@@ -54,7 +55,6 @@ pub(crate) fn fd_pwrite(file: &File, buf: &[u8], offset: host::__wasi_filesize_t
 }
 
 pub(crate) fn fd_fdstat_get(fd: &File) -> Result<host::__wasi_fdflags_t> {
-    use winx::file::AccessMode;
     winx::file::get_file_access_mode(fd.as_raw_handle())
         .map(host_impl::fdflags_from_win)
         .map_err(host_impl::errno_from_win)
@@ -163,8 +163,15 @@ fn dirent_from_path<P: AsRef<Path>>(
     path: P,
     cookie: host::__wasi_dircookie_t,
 ) -> io::Result<Dirent> {
-    trace!("dirent_from_path: opening {}", path.as_ref().to_string_lossy());
-    let file = File::open(path)?;
+    trace!(
+        "dirent_from_path: opening {}",
+        path.as_ref().to_string_lossy()
+    );
+
+    // To open a directory on Windows, FILE_FLAG_BACKUP_SEMANTICS flag must be used
+    let file = OpenOptions::new()
+        .custom_flags(Flags::FILE_FLAG_BACKUP_SEMANTICS.bits())
+        .open(path)?;
     let ty = file.metadata()?.file_type();
     Ok(Dirent {
         ftype: filetype_from_std(&ty),
@@ -373,7 +380,6 @@ pub(crate) fn path_filestat_set_times(
     mut st_mtim: host::__wasi_timestamp_t,
     fst_flags: host::__wasi_fstflags_t,
 ) -> Result<()> {
-    use winx::file::AccessMode;
     let path = resolved.concatenate()?;
     let file = OpenOptions::new()
         .access_mode(AccessMode::FILE_WRITE_ATTRIBUTES.bits())
