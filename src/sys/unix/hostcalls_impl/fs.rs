@@ -441,7 +441,7 @@ pub(crate) fn path_filestat_set_times(
     }
 
     let atflags = match dirflags {
-        wasm32::__WASI_LOOKUP_SYMLINK_FOLLOW => UtimensatFlags::FollowSymlink,
+        host::__WASI_LOOKUP_SYMLINK_FOLLOW => UtimensatFlags::FollowSymlink,
         _ => UtimensatFlags::NoFollowSymlink,
     };
 
