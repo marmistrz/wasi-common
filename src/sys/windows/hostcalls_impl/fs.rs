@@ -172,7 +172,9 @@ fn dirent_from_path<P: AsRef<Path>>(
     let file = OpenOptions::new()
         .custom_flags(Flags::FILE_FLAG_BACKUP_SEMANTICS.bits())
         .open(path)?;
+    trace!("Getting metadata");
     let ty = file.metadata()?.file_type();
+    trace!("Getting file serial no");
     Ok(Dirent {
         ftype: filetype_from_std(&ty),
         name: String::new(),
