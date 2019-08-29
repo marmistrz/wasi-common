@@ -5,7 +5,7 @@ use crate::helpers::systemtime_to_timestamp;
 use crate::hostcalls_impl::{Dirent, FileType, PathGet};
 use crate::sys::errno_from_ioerror;
 use crate::sys::host_impl::{self, errno_from_nixerror};
-use crate::{host, wasm32, Result};
+use crate::{host, Result};
 use log::trace;
 use nix::libc;
 use std::convert::TryInto;
