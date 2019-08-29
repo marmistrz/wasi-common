@@ -11,6 +11,7 @@ use crate::sys::host_impl;
 use crate::sys::hostcalls_impl::fs_helpers::PathGetExt;
 use crate::sys::{errno_from_host, errno_from_ioerror};
 use crate::{host, Result};
+use log::{debug, trace};
 use std::convert::TryInto;
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
@@ -183,9 +184,11 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     let path = Path::new(&path);
     // The directory /.. is the same as / on Unix, so emulate this behavior too
     let parent = path.parent().unwrap_or(path);
-
+    trace!("    | fd_readdir impl: emulating .");
     let dot = dirent_from_path(path, 1).map_err(errno_from_ioerror)?;
+    trace!("    | fd_readdir impl: emulating ..");
     let dotdot = dirent_from_path(parent, 2).map_err(errno_from_ioerror)?;
+    trace!("    | fd_readdir impl: executing std::fs::ReadDir");
     let iter = path
         .read_dir()
         .map_err(errno_from_ioerror)?
