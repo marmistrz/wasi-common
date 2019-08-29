@@ -159,7 +159,7 @@ pub(crate) fn path_open(
         .map_err(errno_from_ioerror)
 }
 
-fn dirent_from_path<P: AsRef<Path>>(path: P, cookie: host::__wasi_dircookie_t) -> Result<Dirent> {
+fn dirent_from_path<P: AsRef<Path>>(path: P, name: &str, cookie: host::__wasi_dircookie_t) -> Result<Dirent> {
     let path = path.as_ref();
     trace!("dirent_from_path: opening {}", path.to_string_lossy());
 
@@ -172,7 +172,7 @@ fn dirent_from_path<P: AsRef<Path>>(path: P, cookie: host::__wasi_dircookie_t) -
     let ty = file.metadata().map_err(errno_from_ioerror)?.file_type();
     Ok(Dirent {
         ftype: filetype_from_std(&ty),
-        name: path_from_host(path.file_name().expect("dirent_from_path: invalid path"))?,
+        name: name.to_owned(),
         cookie,
         ino: file_serial_no(&file).map_err(errno_from_ioerror)?,
     })
@@ -189,9 +189,9 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     // The directory /.. is the same as / on Unix, so emulate this behavior too
     let parent = path.parent().unwrap_or(path);
     trace!("    | fd_readdir impl: emulating .");
-    let dot = dirent_from_path(path, 1)?;
+    let dot = dirent_from_path(path, ".", 1)?;
     trace!("    | fd_readdir impl: emulating ..");
-    let dotdot = dirent_from_path(parent, 2)?;
+    let dotdot = dirent_from_path(parent, "..", 2)?;
     trace!("    | fd_readdir impl: executing std::fs::ReadDir");
     let iter = path
         .read_dir()
