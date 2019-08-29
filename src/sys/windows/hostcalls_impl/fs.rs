@@ -7,7 +7,7 @@ use crate::helpers::systemtime_to_timestamp;
 use crate::hostcalls_impl::{fd_filestat_set_times_impl, PathGet};
 use crate::hostcalls_impl::{Dirent, FileType};
 use crate::sys::fdentry_impl::determine_type_rights;
-use crate::sys::host_impl;
+use crate::sys::host_impl::{self, path_from_host};
 use crate::sys::hostcalls_impl::fs_helpers::PathGetExt;
 use crate::sys::{errno_from_host, errno_from_ioerror};
 use crate::{host, Result};
@@ -159,32 +159,26 @@ pub(crate) fn path_open(
         .map_err(errno_from_ioerror)
 }
 
-fn dirent_from_path<P: AsRef<Path>>(
-    path: P,
-    cookie: host::__wasi_dircookie_t,
-) -> io::Result<Dirent> {
-    trace!(
-        "dirent_from_path: opening {}",
-        path.as_ref().to_string_lossy()
-    );
+fn dirent_from_path<P: AsRef<Path>>(path: P, cookie: host::__wasi_dircookie_t) -> Result<Dirent> {
+    let path = path.as_ref();
+    trace!("dirent_from_path: opening {}", path.to_string_lossy());
 
     // To open a directory on Windows, FILE_FLAG_BACKUP_SEMANTICS flag must be used
     let file = OpenOptions::new()
         .custom_flags(Flags::FILE_FLAG_BACKUP_SEMANTICS.bits())
-        .open(path)?;
-    trace!("Getting metadata");
-    let ty = file.metadata()?.file_type();
-    trace!("Getting file serial no");
+        .read(true)
+        .open(path)
+        .map_err(errno_from_ioerror)?;
+    let ty = file.metadata().map_err(errno_from_ioerror)?.file_type();
     Ok(Dirent {
         ftype: filetype_from_std(&ty),
-        name: String::new(),
+        name: path_from_host(path.file_name().expect("dirent_from_path: invalid path"))?,
         cookie,
-        ino: file_serial_no(&file)?,
+        ino: file_serial_no(&file).map_err(errno_from_ioerror)?,
     })
 }
 
 pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
-    use host_impl::path_from_host;
     use winx::file::get_path_by_handle;
 
     // TODO document caveats and the order assumptions
@@ -195,9 +189,9 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     // The directory /.. is the same as / on Unix, so emulate this behavior too
     let parent = path.parent().unwrap_or(path);
     trace!("    | fd_readdir impl: emulating .");
-    let dot = dirent_from_path(path, 1).map_err(errno_from_ioerror)?;
+    let dot = dirent_from_path(path, 1)?;
     trace!("    | fd_readdir impl: emulating ..");
-    let dotdot = dirent_from_path(parent, 2).map_err(errno_from_ioerror)?;
+    let dotdot = dirent_from_path(parent, 2)?;
     trace!("    | fd_readdir impl: executing std::fs::ReadDir");
     let iter = path
         .read_dir()
