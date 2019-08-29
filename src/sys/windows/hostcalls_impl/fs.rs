@@ -159,7 +159,11 @@ pub(crate) fn path_open(
         .map_err(errno_from_ioerror)
 }
 
-fn dirent_from_path<P: AsRef<Path>>(path: P, name: &str, cookie: host::__wasi_dircookie_t) -> Result<Dirent> {
+fn dirent_from_path<P: AsRef<Path>>(
+    path: P,
+    name: &str,
+    cookie: host::__wasi_dircookie_t,
+) -> Result<Dirent> {
     let path = path.as_ref();
     trace!("dirent_from_path: opening {}", path.to_string_lossy());
 
@@ -178,20 +182,46 @@ fn dirent_from_path<P: AsRef<Path>>(path: P, name: &str, cookie: host::__wasi_di
     })
 }
 
+// On Windows there is apparently no support for seeking the directory stream in the OS.
+// cf. https://github.com/WebAssembly/WASI/issues/61
+//
+// The implementation here may perform in O(n^2) if the host buffer is O(1)
+// and the number of directory entries is O(n).
+// TODO: Add a heuristic optimization to achieve O(n) time in the most common case
+//      where fd_readdir is resumed where it previously finished
+//
+// Correctness of this approach relies upon one assumption: that the order of entries
+// returned by `FindNextFileW` is stable, i.e. doesn't change if the directory
+// contents stay the same. This invariant is crucial to be able to implement
+// any kind of seeking whatsoever without having to read the whole directory at once
+// and then return the data from cache. (which leaks memory)
+//
+// The MSDN documentation explicitly says that the order in which the search returns the files
+// is not guaranteed, and is dependent on the file system.
+// cf. https://docs.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findnextfilew
+//
+// This stackoverflow post suggests that `FindNextFileW` is indeed stable and that
+// the order of directory entries depends **only** on the filesystem used, but the
+// MSDN documentation is not clear about this.
+// cf. https://stackoverflow.com/questions/47380739/is-findfirstfile-and-findnextfile-order-random-even-for-dvd
+//
+// Implementation details:
+// Cookies for the directory entries start from 1. (0 is reserved by host::__WASI_DIRCOOKIE_START)
+// .        gets cookie = 1
+// ..       gets cookie = 2
+// other entries, in order they were returned by FindNextFileW get subsequent integers as their cookies
 pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
     use winx::file::get_path_by_handle;
 
-    // TODO document caveats and the order assumptions
     let cookie = cookie.try_into().map_err(|_| host::__WASI_EOVERFLOW)?;
     let path = get_path_by_handle(fd.as_raw_handle()).map_err(host_impl::errno_from_win)?;
     // std::fs::ReadDir doesn't return . and .., so we need to emulate it
     let path = Path::new(&path);
     // The directory /.. is the same as / on Unix, so emulate this behavior too
     let parent = path.parent().unwrap_or(path);
-    trace!("    | fd_readdir impl: emulating .");
     let dot = dirent_from_path(path, ".", 1)?;
-    trace!("    | fd_readdir impl: emulating ..");
     let dotdot = dirent_from_path(parent, "..", 2)?;
+
     trace!("    | fd_readdir impl: executing std::fs::ReadDir");
     let iter = path
         .read_dir()
@@ -214,9 +244,8 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
     // so we need to use a Vec
     let iter = vec![dot, dotdot].into_iter().map(Ok).chain(iter);
 
-    // Emulate seekdir(). This may give O(n^2) TODO explain why
-    // TODO explain why it's the least evil
-    iter.skip(cookie).collect() //fixme cast
+    // Emulate seekdir(). This may give O(n^2)
+    iter.skip(cookie).collect()
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {

@@ -267,7 +267,7 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
                     .map_err(|_| host::__WASI_EILSEQ)?
                     .to_owned(),
                 ino: dir.ino(),
-                ftype: filetype_from_nixdir(dir.file_type()), // TODO use From<_> conversions
+                ftype: filetype_from_nixdir(dir.file_type()),
                 cookie: dir
                     .seek_loc()
                     .to_raw()
