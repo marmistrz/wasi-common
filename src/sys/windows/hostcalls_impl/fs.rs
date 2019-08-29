@@ -163,12 +163,13 @@ fn dirent_from_path<P: AsRef<Path>>(
     path: P,
     cookie: host::__wasi_dircookie_t,
 ) -> io::Result<Dirent> {
+    trace!("dirent_from_path: opening {}", path.as_ref().to_string_lossy());
     let file = File::open(path)?;
     let ty = file.metadata()?.file_type();
     Ok(Dirent {
         ftype: filetype_from_std(&ty),
         name: String::new(),
-        cookie: 0,
+        cookie,
         ino: file_serial_no(&file)?,
     })
 }
