@@ -254,10 +254,7 @@ pub(crate) fn fd_readdir(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<
         dir.seek(loc);
     }
 
-    // TODO nix::dir::Iter calls rewinddir in drop(), but we can't use
-    // ManuallyDrop because moving out of borrowed context
-    // Should we just add an option in nix not to rewind at the end??
-    dir.iter()
+    dir.iter_norewind()
         .map(|dir| {
             let dir: Entry = dir.map_err(errno_from_nixerror)?;
             Ok(Dirent {
