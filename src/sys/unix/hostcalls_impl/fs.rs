@@ -4,8 +4,8 @@ use super::fs_helpers::*;
 use crate::helpers::systemtime_to_timestamp;
 use crate::hostcalls_impl::PathGet;
 use crate::sys::errno_from_ioerror;
-use crate::sys::host_impl;
-use crate::{host, wasm32, Result};
+use crate::sys::host_impl::{self, errno_from_nix};
+use crate::{host, Result};
 use nix::libc::{self, c_long, c_void};
 use std::convert::TryInto;
 use std::ffi::CString;
@@ -42,45 +42,50 @@ pub(crate) fn fd_fdstat_set_flags(fd: &File, fdflags: host::__wasi_fdflags_t) ->
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn fd_advise(
     file: &File,
     advice: host::__wasi_advice_t,
     offset: host::__wasi_filesize_t,
     len: host::__wasi_filesize_t,
 ) -> Result<()> {
-    #[cfg(target_os = "linux")]
     {
-        use nix::libc::off_t;
+        use nix::fcntl::{posix_fadvise, PosixFadviseAdvice};
 
+        let offset = offset.try_into().map_err(|_| host::__WASI_EOVERFLOW)?;
+        let len = len.try_into().map_err(|_| host::__WASI_EOVERFLOW)?;
         let host_advice = match advice {
-            host::__WASI_ADVICE_DONTNEED => libc::POSIX_FADV_DONTNEED,
-            host::__WASI_ADVICE_SEQUENTIAL => libc::POSIX_FADV_SEQUENTIAL,
-            host::__WASI_ADVICE_WILLNEED => libc::POSIX_FADV_DONTNEED,
-            host::__WASI_ADVICE_NOREUSE => libc::POSIX_FADV_NOREUSE,
-            host::__WASI_ADVICE_RANDOM => libc::POSIX_FADV_RANDOM,
-            host::__WASI_ADVICE_NORMAL => libc::POSIX_FADV_NORMAL,
+            host::__WASI_ADVICE_DONTNEED => PosixFadviseAdvice::POSIX_FADV_DONTNEED,
+            host::__WASI_ADVICE_SEQUENTIAL => PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
+            host::__WASI_ADVICE_WILLNEED => PosixFadviseAdvice::POSIX_FADV_DONTNEED,
+            host::__WASI_ADVICE_NOREUSE => PosixFadviseAdvice::POSIX_FADV_NOREUSE,
+            host::__WASI_ADVICE_RANDOM => PosixFadviseAdvice::POSIX_FADV_RANDOM,
+            host::__WASI_ADVICE_NORMAL => PosixFadviseAdvice::POSIX_FADV_NORMAL,
             _ => return Err(host::__WASI_EINVAL),
         };
-        let res = unsafe {
-            libc::posix_fadvise(file.as_raw_fd(), offset as off_t, len as off_t, host_advice)
-        };
-        if res != 0 {
-            return Err(host_impl::errno_from_nix(nix::errno::Errno::last()));
-        }
+
+        posix_fadvise(file.as_raw_fd(), offset, len, host_advice)
+            .map_err(|err| errno_from_nix(err.as_errno().unwrap()))?;
     }
 
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (file, offset, len);
-        match advice {
-            host::__WASI_ADVICE_DONTNEED
-            | host::__WASI_ADVICE_SEQUENTIAL
-            | host::__WASI_ADVICE_WILLNEED
-            | host::__WASI_ADVICE_NOREUSE
-            | host::__WASI_ADVICE_RANDOM
-            | host::__WASI_ADVICE_NORMAL => {}
-            _ => return Err(host::__WASI_EINVAL),
-        }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn fd_advise(
+    _file: &File,
+    advice: host::__wasi_advice_t,
+    _offset: host::__wasi_filesize_t,
+    _len: host::__wasi_filesize_t,
+) -> Result<()> {
+    match advice {
+        host::__WASI_ADVICE_DONTNEED
+        | host::__WASI_ADVICE_SEQUENTIAL
+        | host::__WASI_ADVICE_WILLNEED
+        | host::__WASI_ADVICE_NOREUSE
+        | host::__WASI_ADVICE_RANDOM
+        | host::__WASI_ADVICE_NORMAL => {}
+        _ => return Err(host::__WASI_EINVAL),
     }
 
     Ok(())
@@ -213,7 +218,7 @@ pub(crate) fn fd_readdir(
     host_buf: &mut [u8],
     cookie: host::__wasi_dircookie_t,
 ) -> Result<usize> {
-    use libc::{dirent, fdopendir, memcpy, readdir_r, seekdir};
+    use libc::{dirent, fdopendir, memcpy, readdir_r, rewinddir, seekdir};
 
     let host_buf_ptr = host_buf.as_mut_ptr();
     let host_buf_len = host_buf.len();
@@ -221,9 +226,15 @@ pub(crate) fn fd_readdir(
     if dir.is_null() {
         return Err(host_impl::errno_from_nix(nix::errno::Errno::last()));
     }
-    if cookie != wasm32::__WASI_DIRCOOKIE_START {
+
+    if cookie != host::__WASI_DIRCOOKIE_START {
         unsafe { seekdir(dir, cookie as c_long) };
+    } else {
+        // If cookie set to __WASI_DIRCOOKIE_START, rewind the dir ptr
+        // to the start of the stream.
+        unsafe { rewinddir(dir) };
     }
+
     let mut entry_buf = unsafe { std::mem::uninitialized::<dirent>() };
     let mut left = host_buf_len;
     let mut host_buf_offset: usize = 0;
@@ -236,7 +247,7 @@ pub(crate) fn fd_readdir(
         if host_entry.is_null() {
             break;
         }
-        let entry: wasm32::__wasi_dirent_t = host_impl::dirent_from_host(&unsafe { *host_entry })?;
+        let entry: host::__wasi_dirent_t = host_impl::dirent_from_host(&unsafe { *host_entry })?;
         let name_len = entry.d_namlen as usize;
         let required_space = std::mem::size_of_val(&entry) + name_len;
         if required_space > left {
@@ -244,7 +255,7 @@ pub(crate) fn fd_readdir(
         }
         unsafe {
             let ptr = host_buf_ptr.offset(host_buf_offset as isize) as *mut c_void
-                as *mut wasm32::__wasi_dirent_t;
+                as *mut host::__wasi_dirent_t;
             *ptr = entry;
         }
         host_buf_offset += std::mem::size_of_val(&entry);
@@ -425,7 +436,7 @@ pub(crate) fn path_filestat_set_times(
     }
 
     let atflags = match dirflags {
-        wasm32::__WASI_LOOKUP_SYMLINK_FOLLOW => UtimensatFlags::FollowSymlink,
+        host::__WASI_LOOKUP_SYMLINK_FOLLOW => UtimensatFlags::FollowSymlink,
         _ => UtimensatFlags::NoFollowSymlink,
     };
 
