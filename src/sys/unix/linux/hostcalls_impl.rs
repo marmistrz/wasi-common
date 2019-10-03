@@ -1,12 +1,12 @@
+use super::super::dir::{Dir, Entry, SeekLoc};
 use super::osfile::OsFile;
-use crate::hostcalls_impl::PathGet;
+use crate::hostcalls_impl::{Dirent, PathGet};
 use crate::sys::host_impl;
 use crate::sys::unix::str_to_cstring;
 use crate::{host, Error, Result};
-use nix::libc::{self, c_long, c_void};
+use log::{debug, trace};
 use std::convert::TryInto;
 use std::fs::File;
-use std::mem::MaybeUninit;
 use std::os::unix::prelude::AsRawFd;
 
 pub(crate) fn path_unlink_file(resolved: PathGet) -> Result<()> {
@@ -67,75 +67,70 @@ pub(crate) fn path_rename(resolved_old: PathGet, resolved_new: PathGet) -> Resul
     }
 }
 
+pub(crate) fn fd_readdir_impl(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
+    // We need to duplicate the fd, because `opendir(3)`:
+    //     After a successful call to fdopendir(), fd is used internally by the implementation,
+    //     and should not otherwise be used by the application.
+    // `opendir(3p)` also says that it's undefined behavior to
+    // modify the state of the fd in a different way than by accessing DIR*.
+    //
+    // Still, rewinddir will be needed because the two file descriptors
+    // share progress. But we can safely execute closedir now.
+    let fd = fd.try_clone()?;
+    let mut dir = Dir::from(fd)?;
+
+    // Seek if needed. Unless cookie is host::__WASI_DIRCOOKIE_START,
+    // new items may not be returned to the caller.
+    //
+    // According to `opendir(3p)`:
+    //     If a file is removed from or added to the directory after the most recent call
+    //     to opendir() or rewinddir(), whether a subsequent call to readdir() returns an entry
+    //     for that file is unspecified.
+    if cookie == host::__WASI_DIRCOOKIE_START {
+        trace!("     | fd_readdir: doing rewinddir");
+        dir.rewind();
+    } else {
+        trace!("     | fd_readdir: doing seekdir to {}", cookie);
+        let loc = unsafe { SeekLoc::from_raw(cookie as i64) };
+        dir.seek(loc);
+    }
+
+    dir.iter()
+        .map(|dir| {
+            let dir: Entry = dir?;
+            Ok(Dirent {
+                name: dir // TODO can we reuse path_from_host for CStr?
+                    .file_name()
+                    .to_str()?
+                    .to_owned(),
+                ino: dir.ino(),
+                ftype: dir.file_type().into(),
+                cookie: dir.seek_loc().to_raw().try_into()?,
+            })
+        })
+        .collect()
+}
+
+// This should actually be common code with Windows,
+// but there's BSD stuff remaining
 pub(crate) fn fd_readdir(
     os_file: &mut OsFile,
-    host_buf: &mut [u8],
+    mut host_buf: &mut [u8],
     cookie: host::__wasi_dircookie_t,
 ) -> Result<usize> {
-    use libc::{dirent, fdopendir, readdir_r, rewinddir, seekdir};
-
-    let host_buf_ptr = host_buf.as_mut_ptr();
-    let host_buf_len = host_buf.len();
-    let dir = unsafe { fdopendir(os_file.as_raw_fd()) };
-    if dir.is_null() {
-        return Err(host_impl::errno_from_nix(nix::errno::Errno::last()));
+    let vec = fd_readdir_impl(os_file, cookie)?;
+    debug!("Received dirents: {:?}", vec);
+    let mut used = 0;
+    for dirent in vec {
+        let dirent_raw = dirent.to_raw()?;
+        let offset = dirent_raw.len();
+        host_buf[0..offset].copy_from_slice(&dirent_raw);
+        used += offset;
+        host_buf = &mut host_buf[offset..];
     }
 
-    if cookie != host::__WASI_DIRCOOKIE_START {
-        unsafe { seekdir(dir, cookie as c_long) };
-    } else {
-        // If cookie set to __WASI_DIRCOOKIE_START, rewind the dir ptr
-        // to the start of the stream.
-        unsafe { rewinddir(dir) };
-    }
-
-    let mut entry_buf = MaybeUninit::<dirent>::uninit();
-    let mut left = host_buf_len;
-    let mut host_buf_offset: usize = 0;
-    while left > 0 {
-        let mut host_entry: *mut dirent = std::ptr::null_mut();
-
-        // TODO
-        // `readdir_r` syscall is being deprecated so we should look into
-        // replacing it with `readdir` call instead.
-        // Also, `readdir_r` returns a positive int on failure, and doesn't
-        // set the errno.
-        let res = unsafe { readdir_r(dir, entry_buf.as_mut_ptr(), &mut host_entry) };
-        if res == -1 {
-            return Err(host_impl::errno_from_nix(nix::errno::Errno::last()));
-        }
-        if host_entry.is_null() {
-            break;
-        }
-        unsafe { entry_buf.assume_init() };
-        let entry: host::__wasi_dirent_t = host_impl::dirent_from_host(&unsafe { *host_entry })?;
-
-        log::debug!("fd_readdir entry = {:?}", entry);
-
-        let name_len = entry.d_namlen.try_into()?;
-        let required_space = std::mem::size_of_val(&entry) + name_len;
-        if required_space > left {
-            break;
-        }
-        unsafe {
-            let ptr = host_buf_ptr.offset(host_buf_offset.try_into()?) as *mut c_void
-                as *mut host::__wasi_dirent_t;
-            *ptr = entry;
-        }
-        host_buf_offset += std::mem::size_of_val(&entry);
-        let name_ptr = unsafe { *host_entry }.d_name.as_ptr();
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                name_ptr as *const _,
-                host_buf_ptr.offset(host_buf_offset.try_into()?) as *mut _,
-                name_len,
-            )
-        };
-        host_buf_offset += name_len;
-        left -= required_space;
-    }
-
-    Ok(host_buf_len - left)
+    trace!("     | *buf_used={:?}", used);
+    Ok(used)
 }
 
 pub(crate) fn fd_advise(
