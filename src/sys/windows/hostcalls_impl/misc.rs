@@ -5,6 +5,7 @@ use crate::helpers::systemtime_to_timestamp;
 use crate::hostcalls_impl::{ClockEventData, FdEventData};
 use crate::memory::*;
 use crate::sys::host_impl;
+use crate::sys::host_impl;
 use crate::{wasi, wasi32, Error, Result};
 use cpu_time::{ProcessTime, ThreadTime};
 use lazy_static::lazy_static;
