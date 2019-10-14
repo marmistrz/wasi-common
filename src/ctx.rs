@@ -114,7 +114,8 @@ impl WasiCtxBuilder {
             while self.fds.contains_key(&preopen_fd) {
                 preopen_fd = preopen_fd.checked_add(1).ok_or(Error::ENFILE)?;
             }
-            let mut fe = FdEntry::from(dir)?;
+            // FIXME this probably is wrong
+            let mut fe = FdEntry::from_file(dir)?;
             fe.preopen_path = Some(guest_path);
             self.fds.insert(preopen_fd, fe);
             preopen_fd += 1;

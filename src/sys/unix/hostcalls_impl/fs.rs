@@ -3,6 +3,7 @@
 use super::fs_helpers::*;
 use crate::helpers::systemtime_to_timestamp;
 use crate::hostcalls_impl::PathGet;
+use crate::sys::fdentry_impl::OsFile;
 use crate::sys::host_impl;
 use crate::{host, Error, Result};
 use nix::libc;
@@ -95,7 +96,7 @@ pub(crate) fn path_open(
     write: bool,
     oflags: host::__wasi_oflags_t,
     fs_flags: host::__wasi_fdflags_t,
-) -> Result<File> {
+) -> Result<OsFile> {
     use nix::errno::Errno;
     use nix::fcntl::{openat, AtFlags, OFlag};
     use nix::sys::stat::{fstatat, Mode, SFlag};
@@ -173,7 +174,7 @@ pub(crate) fn path_open(
     };
 
     // Determine the type of the new file descriptor and which rights contradict with this type
-    Ok(unsafe { File::from_raw_fd(new_fd) })
+    Ok(unsafe { File::from_raw_fd(new_fd).into() })
 }
 
 pub(crate) fn path_readlink(resolved: PathGet, buf: &mut [u8]) -> Result<usize> {

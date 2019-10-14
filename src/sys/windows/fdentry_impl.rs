@@ -1,4 +1,4 @@
-use crate::fdentry::Descriptor;
+use crate::fdentry::{Descriptor, FdFlags};
 use crate::{host, Error, Result};
 use std::fs::File;
 use std::io;
@@ -6,11 +6,11 @@ use std::ops::{Deref, DerefMut};
 use std::os::windows::prelude::{AsRawHandle, FromRawHandle, RawHandle};
 
 #[derive(Debug)]
-pub(crate) struct OsFile(File);
+pub(crate) struct OsFile(File, FdFlags);
 
-impl From<File> for OsFile {
-    fn from(file: File) -> Self {
-        Self(file)
+impl OsFile {
+    pub(crate) fn new(file: File, flags: FdFlags) -> Self {
+        Self(file, flags)
     }
 }
 

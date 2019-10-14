@@ -1,8 +1,19 @@
 use crate::sys::fdentry_impl::{determine_type_and_access_rights, OsFile};
 use crate::{host, Error, Result};
+use bitflags::bitflags;
 use std::mem::ManuallyDrop;
 use std::path::PathBuf;
 use std::{fs, io};
+
+bitflags! {
+    pub struct FdFlags: host::__wasi_fdflags_t {
+        const APPEND = host::__WASI_FDFLAG_APPEND;
+        const DSYNC = host::__WASI_FDFLAG_DSYNC;
+        const NONBLOCK = host::__WASI_FDFLAG_NONBLOCK;
+        const RSYNC = host::__WASI_FDFLAG_RSYNC;
+        const SYNC = host::__WASI_FDFLAG_SYNC;
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum Descriptor {
@@ -84,12 +95,18 @@ impl Drop for FdObject {
 }
 
 impl FdEntry {
-    pub(crate) fn from(file: fs::File) -> Result<Self> {
-        unsafe { determine_type_and_access_rights(&file) }.map(
+    // FIXME this is usually bad, but we currently use it for context
+    pub(crate) fn from_file(file: fs::File) -> Result<Self> {
+        Self::from(OsFile::new(file, FdFlags::empty()))
+    }
+
+    // TODO From<OsFile>
+    pub(crate) fn from(os_file: OsFile) -> Result<Self> {
+        unsafe { determine_type_and_access_rights(&os_file) }.map(
             |(file_type, rights_base, rights_inheriting)| Self {
                 fd_object: FdObject {
                     file_type,
-                    descriptor: ManuallyDrop::new(Descriptor::OsFile(OsFile::from(file))),
+                    descriptor: ManuallyDrop::new(Descriptor::OsFile(os_file)),
                     needs_close: true,
                 },
                 rights_base,
@@ -99,7 +116,7 @@ impl FdEntry {
         )
     }
 
-    pub(crate) fn duplicate(file: &fs::File) -> Result<Self> {
+    pub(crate) fn duplicate(file: &OsFile) -> Result<Self> {
         Self::from(file.try_clone()?)
     }
 

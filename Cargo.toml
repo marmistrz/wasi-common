@@ -23,6 +23,7 @@ rand = "0.7"
 cfg-if = "0.1.9"
 log = "0.4"
 filetime = "0.2.7"
+bitflags = "1.2.1"
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.15"

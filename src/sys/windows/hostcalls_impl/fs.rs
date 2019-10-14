@@ -2,7 +2,7 @@
 #![allow(unused)]
 use super::fs_helpers::*;
 use crate::ctx::WasiCtx;
-use crate::fdentry::FdEntry;
+use crate::fdentry::{FdEntry, FdFlags};
 use crate::helpers::systemtime_to_timestamp;
 use crate::hostcalls_impl::{fd_filestat_set_times_impl, PathGet};
 use crate::sys::fdentry_impl::{determine_type_rights, OsFile};
@@ -95,7 +95,7 @@ pub(crate) fn path_open(
     write: bool,
     oflags: host::__wasi_oflags_t,
     fdflags: host::__wasi_fdflags_t,
-) -> Result<File> {
+) -> Result<OsFile> {
     use winx::file::{AccessMode, CreationDisposition, Flags};
 
     let mut access_mode = AccessMode::READ_CONTROL;
@@ -160,10 +160,12 @@ pub(crate) fn path_open(
         },
     }
 
-    opts.access_mode(access_mode.bits())
+    let file = opts
+        .access_mode(access_mode.bits())
         .custom_flags(flags.bits())
-        .open(&path)
-        .map_err(Into::into)
+        .open(&path)?;
+    let fdflags = FdFlags::from_bits_truncate(fdflags);
+    Ok(OsFile::new(file, fdflags))
 }
 
 pub(crate) fn fd_readdir(

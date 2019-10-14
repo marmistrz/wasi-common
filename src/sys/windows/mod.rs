@@ -2,15 +2,19 @@ pub(crate) mod fdentry_impl;
 pub(crate) mod host_impl;
 pub(crate) mod hostcalls_impl;
 
+use crate::fdentry::FdFlags;
 use crate::Result;
+pub(crate) use fdentry_impl::OsFile;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
-pub(crate) fn dev_null() -> Result<File> {
+pub(crate) fn dev_null() -> Result<OsFile> {
     OpenOptions::new()
         .read(true)
         .write(true)
         .open("NUL")
+        // TODO is that correct?
+        .map(|file| OsFile::new(file, FdFlags::empty()))
         .map_err(Into::into)
 }
 

@@ -15,14 +15,16 @@ mod bsd;
 mod linux;
 
 use crate::Result;
+use fdentry_impl::OsFile;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
 
-pub(crate) fn dev_null() -> Result<File> {
+pub(crate) fn dev_null() -> Result<OsFile> {
     OpenOptions::new()
         .read(true)
         .write(true)
         .open("/dev/null")
+        .map(Into::into)
         .map_err(Into::into)
 }
 
