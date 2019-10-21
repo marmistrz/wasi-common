@@ -169,6 +169,43 @@ impl<'d> Iterator for Iter<'d> {
     }
 }
 
+pub struct IntoIter(Dir);
+impl Iterator for IntoIter {
+    type Item = Result<Entry>;
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            // Note: POSIX specifies that portable applications should dynamically allocate a
+            // buffer with room for a `d_name` field of size `pathconf(..., _PC_NAME_MAX)` plus 1
+            // for the NUL byte. It doesn't look like the std library does this; it just uses
+            // fixed-sized buffers (and libc's dirent seems to be sized so this is appropriate).
+            // Probably fine here too then.
+            let mut ent = std::mem::MaybeUninit::<dirent>::uninit();
+            let mut result = ptr::null_mut();
+            if let Err(e) = Errno::result(readdir_r(
+                (self.0).0.as_ptr(),
+                ent.as_mut_ptr(),
+                &mut result,
+            )) {
+                return Some(Err(e));
+            }
+            if result.is_null() {
+                return None;
+            }
+            assert_eq!(result, ent.as_mut_ptr());
+            Some(Ok(Entry(ent.assume_init())))
+        }
+    }
+}
+
+impl IntoIterator for Dir {
+    type IntoIter = IntoIter;
+    type Item = Result<Entry>;
+
+    fn into_iter(self) -> IntoIter {
+        IntoIter(self)
+    }
+}
+
 // impl<'d> Drop for Iter<'d> {
 //     fn drop(&mut self) {
 //         unsafe { libc::rewinddir((self.0).0.as_ptr()) }

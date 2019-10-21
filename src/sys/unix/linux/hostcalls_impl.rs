@@ -67,7 +67,10 @@ pub(crate) fn path_rename(resolved_old: PathGet, resolved_new: PathGet) -> Resul
     }
 }
 
-pub(crate) fn fd_readdir_impl(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
+pub(crate) fn fd_readdir_impl(
+    fd: &File,
+    cookie: host::__wasi_dircookie_t,
+) -> Result<impl Iterator<Item = Result<Dirent>>> {
     // We need to duplicate the fd, because `opendir(3)`:
     //     After a successful call to fdopendir(), fd is used internally by the implementation,
     //     and should not otherwise be used by the application.
@@ -95,20 +98,18 @@ pub(crate) fn fd_readdir_impl(fd: &File, cookie: host::__wasi_dircookie_t) -> Re
         dir.seek(loc);
     }
 
-    dir.iter()
-        .map(|dir| {
-            let dir: Entry = dir?;
-            Ok(Dirent {
-                name: dir // TODO can we reuse path_from_host for CStr?
-                    .file_name()
-                    .to_str()?
-                    .to_owned(),
-                ino: dir.ino(),
-                ftype: dir.file_type().into(),
-                cookie: dir.seek_loc().to_raw().try_into()?,
-            })
+    Ok(dir.into_iter().map(|entry| {
+        let entry: Entry = entry?;
+        Ok(Dirent {
+            name: entry // TODO can we reuse path_from_host for CStr?
+                .file_name()
+                .to_str()?
+                .to_owned(),
+            ino: entry.ino(),
+            ftype: entry.file_type().into(),
+            cookie: entry.seek_loc().to_raw().try_into()?,
         })
-        .collect()
+    }))
 }
 
 // This should actually be common code with Windows,
@@ -118,11 +119,10 @@ pub(crate) fn fd_readdir(
     mut host_buf: &mut [u8],
     cookie: host::__wasi_dircookie_t,
 ) -> Result<usize> {
-    let vec = fd_readdir_impl(os_file, cookie)?;
-    debug!("Received dirents: {:?}", vec);
+    let iter = fd_readdir_impl(os_file, cookie)?;
     let mut used = 0;
-    for dirent in vec {
-        let dirent_raw = dirent.to_raw()?;
+    for dirent in iter {
+        let dirent_raw = dirent?.to_raw()?;
         let offset = dirent_raw.len();
         host_buf[0..offset].copy_from_slice(&dirent_raw);
         used += offset;
