@@ -2,9 +2,10 @@
 use crate::ctx::WasiCtx;
 use crate::memory::*;
 use crate::sys::hostcalls_impl;
-use crate::{wasm32, Error, Result};
+use crate::{host, wasm32, Error, Result};
 use log::trace;
 use std::convert::TryFrom;
+use std::time::SystemTime;
 
 pub(crate) fn args_get(
     wasi_ctx: &WasiCtx,
@@ -205,12 +206,73 @@ pub(crate) fn poll_oneoff(
 
     let input_slice = dec_slice_of::<wasm32::__wasi_subscription_t>(memory, input, nsubscriptions)?;
     let input: Vec<_> = input_slice.iter().map(dec_subscription).collect();
+    // Is this actually needed??
     let output_slice = dec_slice_of_mut::<wasm32::__wasi_event_t>(memory, output, nsubscriptions)?;
-    let events_count = hostcalls_impl::poll_oneoff(input, output_slice)?;
+    let timeout = input
+        .iter()
+        .filter_map(|event| match event {
+            Ok(event) if event.type_ == wasm32::__WASI_EVENTTYPE_CLOCK => Some(ClockEventData {
+                delay: wasi_clock_to_relative_ns_delay(unsafe { event.u.clock }).ok()? / 1_000_000,
+                userdata: event.userdata,
+            }),
+            _ => None,
+        })
+        .min_by_key(|event| event.delay);
+
+    let fd_events: Vec<_> = input
+        .iter()
+        .filter_map(|event| match event {
+            Ok(event)
+                if event.type_ == wasm32::__WASI_EVENTTYPE_FD_READ
+                    || event.type_ == wasm32::__WASI_EVENTTYPE_FD_WRITE =>
+            {
+                Some(FdEventData {
+                    fd: unsafe { event.u.fd_readwrite.fd },
+                    type_: event.type_,
+                    userdata: event.userdata,
+                })
+            }
+            _ => None,
+        })
+        .collect();
+
+    let events = hostcalls_impl::poll_oneoff(fd_events, timeout)?;
+    let events_count = events.len();
+    let mut output_slice_cur = output_slice.iter_mut();
+    for event in events {
+        *output_slice_cur.next().unwrap() = enc_event(event);
+    }
 
     trace!("     | *nevents={:?}", events_count);
 
     enc_pointee(memory, nevents, events_count)
+}
+
+fn wasi_clock_to_relative_ns_delay(
+    wasi_clock: host::__wasi_subscription_t___wasi_subscription_u___wasi_subscription_u_clock_t,
+) -> Result<u128> {
+    if wasi_clock.flags != wasm32::__WASI_SUBSCRIPTION_CLOCK_ABSTIME {
+        return Ok(u128::from(wasi_clock.timeout));
+    }
+    let now: u128 = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|_| Error::ENOTCAPABLE)?
+        .as_nanos();
+    let deadline = u128::from(wasi_clock.timeout);
+    Ok(deadline.saturating_sub(now))
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct ClockEventData {
+    pub delay: u128,
+    pub userdata: host::__wasi_userdata_t,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct FdEventData {
+    pub fd: u32,
+    pub type_: host::__wasi_eventtype_t,
+    pub userdata: host::__wasi_userdata_t,
 }
 
 pub(crate) fn sched_yield() -> Result<()> {
