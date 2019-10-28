@@ -2,7 +2,7 @@
 #![allow(unused_unsafe)]
 use super::fs_helpers::*;
 use crate::helpers::systemtime_to_timestamp;
-use crate::hostcalls_impl::PathGet;
+use crate::hostcalls_impl::{FileType, PathGet};
 use crate::sys::host_impl;
 use crate::{host, Error, Result};
 use nix::libc;
@@ -120,6 +120,10 @@ pub(crate) fn path_open(
     // Call openat. Use mode 0o666 so that we follow whatever the user's
     // umask is, but don't set the executable flag, because it isn't yet
     // meaningful for WASI programs to create executable files.
+
+    log::debug!("path_open resolved = {:?}", resolved);
+    log::debug!("path_open oflags = {:?}", nix_all_oflags);
+
     let new_fd = match openat(
         resolved.dirfd().as_raw_fd(),
         resolved.path(),
@@ -172,6 +176,8 @@ pub(crate) fn path_open(
         }
     };
 
+    log::debug!("path_open new_fd = {:?}", new_fd);
+
     // Determine the type of the new file descriptor and which rights contradict with this type
     Ok(unsafe { File::from_raw_fd(new_fd) })
 }
@@ -219,35 +225,35 @@ pub(crate) fn fd_filestat_get_impl(file: &std::fs::File) -> Result<host::__wasi_
         st_atim: systemtime_to_timestamp(metadata.accessed()?)?,
         st_ctim: metadata.ctime().try_into()?, // i64 doesn't fit into u64
         st_mtim: systemtime_to_timestamp(metadata.modified()?)?,
-        st_filetype: filetype(file, &metadata)?,
+        st_filetype: filetype(file, &metadata)?.to_wasi(),
     })
 }
 
-fn filetype(file: &File, metadata: &Metadata) -> Result<host::__wasi_filetype_t> {
+fn filetype(file: &File, metadata: &Metadata) -> Result<FileType> {
     use nix::sys::socket::{self, SockType};
     use std::os::unix::fs::FileTypeExt;
     let ftype = metadata.file_type();
     if ftype.is_file() {
-        Ok(host::__WASI_FILETYPE_REGULAR_FILE)
+        Ok(FileType::RegularFile)
     } else if ftype.is_dir() {
-        Ok(host::__WASI_FILETYPE_DIRECTORY)
+        Ok(FileType::Directory)
     } else if ftype.is_symlink() {
-        Ok(host::__WASI_FILETYPE_SYMBOLIC_LINK)
+        Ok(FileType::Symlink)
     } else if ftype.is_char_device() {
-        Ok(host::__WASI_FILETYPE_CHARACTER_DEVICE)
+        Ok(FileType::CharacterDevice)
     } else if ftype.is_block_device() {
-        Ok(host::__WASI_FILETYPE_BLOCK_DEVICE)
+        Ok(FileType::BlockDevice)
     } else if ftype.is_socket() {
         match socket::getsockopt(file.as_raw_fd(), socket::sockopt::SockType)
             .map_err(|err| err.as_errno().unwrap())
             .map_err(host_impl::errno_from_nix)?
         {
-            SockType::Datagram => Ok(host::__WASI_FILETYPE_SOCKET_DGRAM),
-            SockType::Stream => Ok(host::__WASI_FILETYPE_SOCKET_STREAM),
-            _ => Ok(host::__WASI_FILETYPE_UNKNOWN),
+            SockType::Datagram => Ok(FileType::SocketDgram),
+            SockType::Stream => Ok(FileType::SocketStream),
+            _ => Ok(FileType::Unknown),
         }
     } else {
-        Ok(host::__WASI_FILETYPE_UNKNOWN)
+        Ok(FileType::Unknown)
     }
 }
 
@@ -329,70 +335,6 @@ pub(crate) fn path_filestat_set_times(
 
     let fd = resolved.dirfd().as_raw_fd().into();
     utimensat(fd, resolved.path(), &atim, &mtim, atflags).map_err(Into::into)
-}
-
-pub(crate) fn path_symlink(old_path: &str, resolved: PathGet) -> Result<()> {
-    use nix::libc::symlinkat;
-
-    let old_path_cstr = CString::new(old_path.as_bytes()).map_err(|_| Error::EILSEQ)?;
-    let new_path_cstr = CString::new(resolved.path().as_bytes()).map_err(|_| Error::EILSEQ)?;
-
-    let res = unsafe {
-        symlinkat(
-            old_path_cstr.as_ptr(),
-            resolved.dirfd().as_raw_fd(),
-            new_path_cstr.as_ptr(),
-        )
-    };
-    if res != 0 {
-        Err(host_impl::errno_from_nix(nix::errno::Errno::last()))
-    } else {
-        Ok(())
-    }
-}
-
-pub(crate) fn path_unlink_file(resolved: PathGet) -> Result<()> {
-    use nix::errno;
-    use nix::libc::unlinkat;
-
-    let path_cstr = CString::new(resolved.path().as_bytes()).map_err(|_| Error::EILSEQ)?;
-
-    // nix doesn't expose unlinkat() yet
-    match unsafe { unlinkat(resolved.dirfd().as_raw_fd(), path_cstr.as_ptr(), 0) } {
-        0 => Ok(()),
-        _ => {
-            let mut e = errno::Errno::last();
-
-            #[cfg(not(linux))]
-            {
-                // Non-Linux implementations may return EPERM when attempting to remove a
-                // directory without REMOVEDIR. While that's what POSIX specifies, it's
-                // less useful. Adjust this to EISDIR. It doesn't matter that this is not
-                // atomic with the unlinkat, because if the file is removed and a directory
-                // is created before fstatat sees it, we're racing with that change anyway
-                // and unlinkat could have legitimately seen the directory if the race had
-                // turned out differently.
-                use nix::fcntl::AtFlags;
-                use nix::sys::stat::{fstatat, SFlag};
-
-                if e == errno::Errno::EPERM {
-                    if let Ok(stat) = fstatat(
-                        resolved.dirfd().as_raw_fd(),
-                        resolved.path(),
-                        AtFlags::AT_SYMLINK_NOFOLLOW,
-                    ) {
-                        if SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFDIR) {
-                            e = errno::Errno::EISDIR;
-                        }
-                    } else {
-                        e = errno::Errno::last();
-                    }
-                }
-            }
-
-            Err(host_impl::errno_from_nix(e))
-        }
-    }
 }
 
 pub(crate) fn path_remove_directory(resolved: PathGet) -> Result<()> {

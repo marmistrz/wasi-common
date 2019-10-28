@@ -24,9 +24,7 @@ pub(crate) unsafe fn fd_close(wasi_ctx: &mut WasiCtx, fd: wasm32::__wasi_fd_t) -
         }
     }
 
-    let mut fe = wasi_ctx.fds.remove(&fd).ok_or(Error::EBADF)?;
-    fe.fd_object.needs_close = true;
-
+    wasi_ctx.fds.remove(&fd).ok_or(Error::EBADF)?;
     Ok(())
 }
 
@@ -158,7 +156,7 @@ pub(crate) unsafe fn fd_read(
         .map(|vec| host::iovec_to_host_mut(vec))
         .collect();
 
-    let maybe_host_nread = match &mut *fe.fd_object.descriptor {
+    let maybe_host_nread = match &mut fe.fd_object.descriptor {
         Descriptor::OsFile(file) => file.read_vectored(&mut iovs),
         Descriptor::Stdin => io::stdin().lock().read_vectored(&mut iovs),
         _ => return Err(Error::EBADF),
@@ -374,7 +372,7 @@ pub(crate) unsafe fn fd_write(
     let iovs: Vec<io::IoSlice> = iovs.iter().map(|vec| host::iovec_to_host(vec)).collect();
 
     // perform unbuffered writes
-    let host_nwritten = match &mut *fe.fd_object.descriptor {
+    let host_nwritten = match &mut fe.fd_object.descriptor {
         Descriptor::OsFile(file) => file.write_vectored(&iovs)?,
         Descriptor::Stdin => return Err(Error::EBADF),
         Descriptor::Stdout => {
@@ -652,7 +650,7 @@ pub(crate) unsafe fn path_readlink(
     enc_usize_byref(memory, buf_used, 0)?;
 
     let dirfd = dec_fd(dirfd);
-    let path = dec_slice_of::<u8>(memory, path_ptr, path_len).and_then(host::path_from_vec)?;
+    let path = dec_slice_of::<u8>(memory, path_ptr, path_len).and_then(host::path_from_slice)?;
 
     trace!("     | (path_ptr,path_len)='{}'", &path);
 
@@ -927,7 +925,7 @@ pub(crate) unsafe fn path_symlink(
     let dirfd = wasi_ctx
         .get_fd_entry(dirfd, host::__WASI_RIGHT_PATH_SYMLINK, 0)
         .and_then(|fe| fe.fd_object.descriptor.as_file())?;
-    let resolved_new = path_get(dirfd, 0, new_path, false)?;
+    let resolved_new = path_get(dirfd, 0, new_path, true)?;
 
     hostcalls_impl::path_symlink(old_path, resolved_new)
 }
@@ -1061,4 +1059,24 @@ pub(crate) unsafe fn fd_prestat_dir_name(
 
             enc_slice_of(memory, path.as_bytes(), path_ptr)
         })
+}
+
+#[allow(dead_code)] // trouble with sockets
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub(crate) enum FileType {
+    Unknown = host::__WASI_FILETYPE_UNKNOWN,
+    BlockDevice = host::__WASI_FILETYPE_BLOCK_DEVICE,
+    CharacterDevice = host::__WASI_FILETYPE_CHARACTER_DEVICE,
+    Directory = host::__WASI_FILETYPE_DIRECTORY,
+    RegularFile = host::__WASI_FILETYPE_REGULAR_FILE,
+    SocketDgram = host::__WASI_FILETYPE_SOCKET_DGRAM,
+    SocketStream = host::__WASI_FILETYPE_SOCKET_STREAM,
+    Symlink = host::__WASI_FILETYPE_SYMBOLIC_LINK,
+}
+
+impl FileType {
+    pub(crate) fn to_wasi(&self) -> host::__wasi_filetype_t {
+        *self as host::__wasi_filetype_t
+    }
 }

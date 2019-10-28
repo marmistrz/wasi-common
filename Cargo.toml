@@ -1,6 +1,6 @@
 [package]
 name = "wasi-common"
-version = "0.1.0"
+version = "0.4.0"
 authors = [
     "Adam C. Foltzer <acfoltzer@fastly.com>",
     "Frank Denis <github@pureftpd.org>",
@@ -9,6 +9,10 @@ authors = [
 edition = "2018"
 license = "Apache-2.0 WITH LLVM-exception"
 description = "WASI implementation in Rust"
+categories = ["wasm"]
+keywords = ["webassembly", "wasm"]
+repository = "https://github.com/CraneStation/wasi-common"
+readme = "README.md"
 
 [features]
 # this feature requires wasm32-wasi target installed, and it enables wasm32
@@ -16,7 +20,7 @@ description = "WASI implementation in Rust"
 wasm_tests = []
 
 [dependencies]
-wasi-common-cbindgen = { path = "wasi-common-cbindgen" }
+wasi-common-cbindgen = { path = "wasi-common-cbindgen", version = "0.4.0" }
 failure = "0.1"
 libc = "0.2"
 rand = "0.7"
@@ -29,20 +33,18 @@ lazy_static = "1.4.0"
 nix = "0.15"
 
 [target.'cfg(windows)'.dependencies]
-winx = { path = "winx" }
+winx = { path = "winx", version = "0.4.0" }
 winapi = "0.3"
 cpu-time = "1.0"
 
 
 [dev-dependencies]
-wasmtime-runtime = { git = "https://github.com/cranestation/wasmtime", rev = "cb38b48" }
-wasmtime-environ = { git = "https://github.com/cranestation/wasmtime", rev = "cb38b48" }
-wasmtime-jit = { git = "https://github.com/cranestation/wasmtime", rev = "cb38b48" }
-wasmtime-wasi = { git = "https://github.com/cranestation/wasmtime", rev = "cb38b48" }
-cranelift-codegen = "0.44.0"
-cranelift-entity = "0.44.0"
-cranelift-wasm = "0.44.0"
-cranelift-native = "0.44.0"
+wasmtime-runtime = { git = "https://github.com/cranestation/wasmtime", rev = "875eea6" }
+wasmtime-environ = { git = "https://github.com/cranestation/wasmtime", rev = "875eea6" }
+wasmtime-jit = { git = "https://github.com/cranestation/wasmtime", rev = "875eea6" }
+wasmtime-wasi = { git = "https://github.com/cranestation/wasmtime", rev = "875eea6" }
+wasmtime-api = { git = "https://github.com/cranestation/wasmtime", rev = "875eea6" }
+cranelift-codegen = "0.46.1"
 target-lexicon = "0.8.1"
 pretty_env_logger = "0.3.0"
 tempfile = "3.1.0"
