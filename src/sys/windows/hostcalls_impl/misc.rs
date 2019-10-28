@@ -42,6 +42,9 @@ fn get_monotonic_time() -> Duration {
     // We're circumventing the fact that we can't get a Duration from an Instant
     // The epoch of __WASI_CLOCK_MONOTONIC is undefined, so we fix a time point once
     // and count relative to this time point.
+    //
+    // The alternative would be to copy over the implementation of std::time::Instant
+    // to our source tree and add a conversion to std::time::Duration
     START_MONOTONIC.elapsed()
 }
 
