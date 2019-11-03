@@ -1058,6 +1058,7 @@ pub(crate) struct Dirent {
 }
 
 impl Dirent {
+    #![allow(unused)] // temporarily, until BSD catches up with this change
     pub fn to_raw(&self) -> Result<Vec<u8>> {
         use std::slice;
 

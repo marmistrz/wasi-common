@@ -1,5 +1,6 @@
 // Based on src/dir.rs from nix
 #![allow(clippy::use_self)]
+#![allow(unused)] // temporarily, until BSD catches up with this change
 use crate::hostcalls_impl::FileType;
 use libc;
 use nix::{errno::Errno, Error, Result};
