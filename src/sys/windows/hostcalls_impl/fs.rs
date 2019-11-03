@@ -214,7 +214,7 @@ fn dirent_from_path<P: AsRef<Path>>(
 // cf. https://stackoverflow.com/questions/47380739/is-findfirstfile-and-findnextfile-order-random-even-for-dvd
 //
 // Implementation details:
-// Cookies for the directory entries start from 1. (0 is reserved by host::__WASI_DIRCOOKIE_START)
+// Cookies for the directory entries start from 1. (0 is reserved by wasi::__WASI_DIRCOOKIE_START)
 // .        gets cookie = 1
 // ..       gets cookie = 2
 // other entries, in order they were returned by FindNextFileW get subsequent integers as their cookies

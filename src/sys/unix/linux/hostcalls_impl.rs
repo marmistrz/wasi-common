@@ -82,7 +82,7 @@ pub(crate) fn fd_readdir_impl(
     let fd = fd.try_clone()?;
     let mut dir = Dir::from(fd)?;
 
-    // Seek if needed. Unless cookie is host::__WASI_DIRCOOKIE_START,
+    // Seek if needed. Unless cookie is wasi::__WASI_DIRCOOKIE_START,
     // new items may not be returned to the caller.
     //
     // According to `opendir(3p)`:
