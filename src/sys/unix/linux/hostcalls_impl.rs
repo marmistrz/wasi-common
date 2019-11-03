@@ -3,10 +3,8 @@ use super::osfile::OsFile;
 use crate::hostcalls_impl::{Dirent, PathGet};
 use crate::sys::host_impl;
 use crate::sys::unix::str_to_cstring;
-use crate::{host, Error, Result};
-use log::{debug, trace};
+use log::trace;
 use crate::{wasi, Error, Result};
-use nix::libc::{self, c_long, c_void};
 use std::convert::TryInto;
 use std::fs::File;
 use std::os::unix::prelude::AsRawFd;
@@ -71,7 +69,7 @@ pub(crate) fn path_rename(resolved_old: PathGet, resolved_new: PathGet) -> Resul
 
 pub(crate) fn fd_readdir_impl(
     fd: &File,
-    cookie: host::__wasi_dircookie_t,
+    cookie: wasi::__wasi_dircookie_t,
 ) -> Result<impl Iterator<Item = Result<Dirent>>> {
     // We need to duplicate the fd, because `opendir(3)`:
     //     After a successful call to fdopendir(), fd is used internally by the implementation,
@@ -91,7 +89,7 @@ pub(crate) fn fd_readdir_impl(
     //     If a file is removed from or added to the directory after the most recent call
     //     to opendir() or rewinddir(), whether a subsequent call to readdir() returns an entry
     //     for that file is unspecified.
-    if cookie == host::__WASI_DIRCOOKIE_START {
+    if cookie == wasi::__WASI_DIRCOOKIE_START {
         trace!("     | fd_readdir: doing rewinddir");
         dir.rewind();
     } else {

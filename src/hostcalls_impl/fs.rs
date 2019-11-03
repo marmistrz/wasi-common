@@ -1054,7 +1054,7 @@ pub(crate) struct Dirent {
     pub name: String,
     pub ftype: FileType,
     pub ino: u64,
-    pub cookie: host::__wasi_dircookie_t,
+    pub cookie: wasi::__wasi_dircookie_t,
 }
 
 impl Dirent {
@@ -1063,19 +1063,20 @@ impl Dirent {
 
         let name = self.name.as_bytes();
         let namlen = name.len();
-        let dirent_size = mem::size_of::<host::__wasi_dirent_t>();
+        let dirent_size = mem::size_of::<wasi::__wasi_dirent_t>();
         let offset = dirent_size.checked_add(namlen).ok_or(Error::EOVERFLOW)?;
 
         let mut raw = Vec::<u8>::with_capacity(offset);
         raw.resize(offset, 0);
 
-        let sys_dirent = raw.as_mut_ptr() as *mut host::__wasi_dirent_t;
+        let sys_dirent = raw.as_mut_ptr() as *mut wasi::__wasi_dirent_t;
         unsafe {
-            *sys_dirent = host::__wasi_dirent_t {
+            *sys_dirent = wasi::__wasi_dirent_t {
                 d_namlen: namlen.try_into()?,
                 d_ino: self.ino,
                 d_next: self.cookie,
                 d_type: self.ftype.to_wasi(),
+                __bindgen_padding_0: mem::zeroed(),
             };
         }
 
