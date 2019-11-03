@@ -5,6 +5,8 @@ use crate::sys::host_impl;
 use crate::sys::unix::str_to_cstring;
 use crate::{host, Error, Result};
 use log::{debug, trace};
+use crate::{wasi, Error, Result};
+use nix::libc::{self, c_long, c_void};
 use std::convert::TryInto;
 use std::fs::File;
 use std::os::unix::prelude::AsRawFd;
@@ -117,7 +119,7 @@ pub(crate) fn fd_readdir_impl(
 pub(crate) fn fd_readdir(
     os_file: &mut OsFile,
     mut host_buf: &mut [u8],
-    cookie: host::__wasi_dircookie_t,
+    cookie: wasi::__wasi_dircookie_t,
 ) -> Result<usize> {
     let iter = fd_readdir_impl(os_file, cookie)?;
     let mut used = 0;
@@ -135,9 +137,9 @@ pub(crate) fn fd_readdir(
 
 pub(crate) fn fd_advise(
     file: &File,
-    advice: host::__wasi_advice_t,
-    offset: host::__wasi_filesize_t,
-    len: host::__wasi_filesize_t,
+    advice: wasi::__wasi_advice_t,
+    offset: wasi::__wasi_filesize_t,
+    len: wasi::__wasi_filesize_t,
 ) -> Result<()> {
     {
         use nix::fcntl::{posix_fadvise, PosixFadviseAdvice};
@@ -145,12 +147,12 @@ pub(crate) fn fd_advise(
         let offset = offset.try_into()?;
         let len = len.try_into()?;
         let host_advice = match advice {
-            host::__WASI_ADVICE_DONTNEED => PosixFadviseAdvice::POSIX_FADV_DONTNEED,
-            host::__WASI_ADVICE_SEQUENTIAL => PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
-            host::__WASI_ADVICE_WILLNEED => PosixFadviseAdvice::POSIX_FADV_WILLNEED,
-            host::__WASI_ADVICE_NOREUSE => PosixFadviseAdvice::POSIX_FADV_NOREUSE,
-            host::__WASI_ADVICE_RANDOM => PosixFadviseAdvice::POSIX_FADV_RANDOM,
-            host::__WASI_ADVICE_NORMAL => PosixFadviseAdvice::POSIX_FADV_NORMAL,
+            wasi::__WASI_ADVICE_DONTNEED => PosixFadviseAdvice::POSIX_FADV_DONTNEED,
+            wasi::__WASI_ADVICE_SEQUENTIAL => PosixFadviseAdvice::POSIX_FADV_SEQUENTIAL,
+            wasi::__WASI_ADVICE_WILLNEED => PosixFadviseAdvice::POSIX_FADV_WILLNEED,
+            wasi::__WASI_ADVICE_NOREUSE => PosixFadviseAdvice::POSIX_FADV_NOREUSE,
+            wasi::__WASI_ADVICE_RANDOM => PosixFadviseAdvice::POSIX_FADV_RANDOM,
+            wasi::__WASI_ADVICE_NORMAL => PosixFadviseAdvice::POSIX_FADV_NORMAL,
             _ => return Err(Error::EINVAL),
         };
 
