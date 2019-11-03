@@ -1,13 +1,10 @@
 // Based on src/dir.rs from nix
 #![allow(clippy::use_self)]
+use crate::hostcalls_impl::FileType;
 use libc;
-use nix::{
-    errno::Errno,
-    Error, Result,
-};
+use nix::{errno::Errno, Error, Result};
 use std::os::unix::io::{AsRawFd, IntoRawFd, RawFd};
 use std::{ffi, ptr};
-use crate::hostcalls_impl::FileType;
 
 #[cfg(target_os = "linux")]
 use libc::{dirent64 as dirent, readdir64_r as readdir_r};
@@ -113,10 +110,11 @@ impl Iterator for IntoIter {
                 return Some(Err(e));
             }
             if result.is_null() {
-                return None;
+                None
+            } else {
+                assert_eq!(result, ent.as_mut_ptr(), "readdir_r specification violated");
+                Some(Ok(Entry(ent.assume_init())))
             }
-            assert_eq!(result, ent.as_mut_ptr());
-            Some(Ok(Entry(ent.assume_init())))
         }
     }
 }

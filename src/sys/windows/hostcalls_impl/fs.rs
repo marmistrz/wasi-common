@@ -8,8 +8,8 @@ use crate::hostcalls_impl::{fd_filestat_set_times_impl, Dirent, FileType, PathGe
 use crate::sys::fdentry_impl::{determine_type_rights, OsFile};
 use crate::sys::host_impl::{self, path_from_host};
 use crate::sys::hostcalls_impl::fs_helpers::PathGetExt;
-use log::{debug, trace};
 use crate::{wasi, Error, Result};
+use log::{debug, trace};
 use std::convert::TryInto;
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Seek, SeekFrom};
@@ -171,7 +171,7 @@ pub(crate) fn path_open(
 fn dirent_from_path<P: AsRef<Path>>(
     path: P,
     name: &str,
-    cookie: host::__wasi_dircookie_t,
+    cookie: wasi::__wasi_dircookie_t,
 ) -> Result<Dirent> {
     let path = path.as_ref();
     trace!("dirent_from_path: opening {}", path.to_string_lossy());
@@ -218,14 +218,17 @@ fn dirent_from_path<P: AsRef<Path>>(
 // .        gets cookie = 1
 // ..       gets cookie = 2
 // other entries, in order they were returned by FindNextFileW get subsequent integers as their cookies
-pub(crate) fn fd_readdir_impl(fd: &File, cookie: host::__wasi_dircookie_t) -> Result<Vec<Dirent>> {
+pub(crate) fn fd_readdir_impl(
+    fd: &File,
+    cookie: wasi::__wasi_dircookie_t,
+) -> Result<impl Iterator<Item = Result<Dirent>>> {
     use winx::file::get_file_path;
 
     let cookie = cookie.try_into()?;
     let path = get_file_path(fd)?;
     // std::fs::ReadDir doesn't return . and .., so we need to emulate it
     let path = Path::new(&path);
-    // The directory /.. is the same as / on Unix, so emulate this behavior too
+    // The directory /.. is the same as / on Unix (at least on ext4), so emulate this behavior too
     let parent = path.parent().unwrap_or(path);
     let dot = dirent_from_path(path, ".", 1)?;
     let dotdot = dirent_from_path(parent, "..", 2)?;
@@ -243,28 +246,35 @@ pub(crate) fn fd_readdir_impl(fd: &File, cookie: host::__wasi_dircookie_t) -> Re
     });
 
     // into_iter for arrays is broken and returns references instead of values,
-    // so we need to use a Vec
+    // so we need to use vec![...] and do heap allocation
+    // See https://github.com/rust-lang/rust/issues/25725
     let iter = vec![dot, dotdot].into_iter().map(Ok).chain(iter);
 
-    // Emulate seekdir(). This may give O(n^2)
-    iter.skip(cookie).collect()
+    // Emulate seekdir(). This may give O(n^2) complexity if used with a
+    // small host_buf, but this is difficult to implement efficiently.
+    //
+    // See https://github.com/WebAssembly/WASI/issues/61 for more details.
+    Ok(iter.skip(cookie))
 }
 
 // This should actually be common code with Linux
 pub(crate) fn fd_readdir(
-    fd: &mut OsFile,
-    host_buf: &mut [u8],
+    os_file: &mut OsFile,
+    mut host_buf: &mut [u8],
     cookie: wasi::__wasi_dircookie_t,
 ) -> Result<usize> {
-    let vec = fd_readdir_impl(os_file, cookie)?;
-    debug!("Received dirents: {:?}", vec);
+    let iter = fd_readdir_impl(os_file, cookie)?;
     let mut used = 0;
-    for dirent in vec {
-        let dirent_raw = dirent.to_raw()?;
+    for dirent in iter {
+        let dirent_raw = dirent?.to_raw()?;
         let offset = dirent_raw.len();
-        host_buf[0..offset].copy_from_slice(&dirent_raw);
-        used += offset;
-        host_buf = &mut host_buf[offset..];
+        if host_buf.len() < offset {
+            break;
+        } else {
+            host_buf[0..offset].copy_from_slice(&dirent_raw);
+            used += offset;
+            host_buf = &mut host_buf[offset..];
+        }
     }
 
     trace!("     | *buf_used={:?}", used);

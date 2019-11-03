@@ -3,8 +3,8 @@ use super::osfile::OsFile;
 use crate::hostcalls_impl::{Dirent, PathGet};
 use crate::sys::host_impl;
 use crate::sys::unix::str_to_cstring;
-use log::trace;
 use crate::{wasi, Error, Result};
+use log::trace;
 use std::convert::TryInto;
 use std::fs::File;
 use std::os::unix::prelude::AsRawFd;
@@ -124,9 +124,13 @@ pub(crate) fn fd_readdir(
     for dirent in iter {
         let dirent_raw = dirent?.to_raw()?;
         let offset = dirent_raw.len();
-        host_buf[0..offset].copy_from_slice(&dirent_raw);
-        used += offset;
-        host_buf = &mut host_buf[offset..];
+        if host_buf.len() < offset {
+            break;
+        } else {
+            host_buf[0..offset].copy_from_slice(&dirent_raw);
+            used += offset;
+            host_buf = &mut host_buf[offset..];
+        }
     }
 
     trace!("     | *buf_used={:?}", used);
