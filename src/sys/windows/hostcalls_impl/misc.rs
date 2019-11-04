@@ -52,7 +52,7 @@ pub(crate) fn clock_res_get(clock_id: wasi::__wasi_clockid_t) -> Result<wasi::__
         // [4] https://www.codeproject.com/Tips/1011902/High-Resolution-Time-For-Windows
         // [5] https://stackoverflow.com/questions/7685762/windows-7-timing-functions-how-to-use-getsystemtimeadjustment-correctly
         // [6] https://bugs.python.org/issue19007
-        wasi::__WASI_CLOCK_REALTIME => 55000,
+        wasi::__WASI_CLOCK_REALTIME => 55_000_000,
         // std::time::Instant uses QueryPerformanceCounter & QueryPerformanceFrequency internally
         wasi::__WASI_CLOCK_MONOTONIC => get_perf_counter_resolution()?.as_nanos().try_into()?,
         // The best we can do is to hardcode the value from the docs.
