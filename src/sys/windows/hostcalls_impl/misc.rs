@@ -34,8 +34,67 @@ pub(crate) fn poll_oneoff(
     timeout: Option<ClockEventData>,
     fd_events: Vec<FdEventData>,
     events: &mut Vec<wasi::__wasi_event_t>,
-) -> Result<Vec<wasi::__wasi_event_t>> {
-    unimplemented!("poll_oneoff")
+) -> Result<()> {
+    use crate::fdentry::Descriptor;
+    if fd_events.is_empty() && timeout.is_none() {
+        return Ok(());
+    }
+
+    let mut no_stdin = 0;
+
+    for event in fd_events {
+        // Currently WASI file support is only (a) regular files (b) directories (c) symlinks on Windows,
+        // which are always ready to write on Unix.
+        //
+        // We need to consider stdin/stdout/stderr separately. We treat stdout/stderr as always ready to write
+        // and only poll the stdin.
+        match event.descriptor {
+            Descriptor::Stdin => no_stdin += 1,
+            _ => events.push(wasi::__wasi_event_t {
+                userdata: event.userdata,
+                type_: event.type_,
+                error: wasi::__WASI_ESUCCESS,
+                u: wasi::__wasi_event_t___wasi_event_u {
+                    fd_readwrite:
+                        wasi::__wasi_event_t___wasi_event_u___wasi_event_u_fd_readwrite_t {
+                            nbytes: 0, // FIXME
+                            flags: 0,
+                            __bindgen_padding_0: [0, 0, 0],
+                        },
+                },
+                __bindgen_padding_0: 0,
+            }),
+        }
+    }
+
+    if no_stdin > 0 {}
+
+    // let poll_timeout = timeout.map_or(-1, |timeout| {
+    //     let delay = timeout.delay / 1_000_000; // poll syscall requires delay to expressed in milliseconds
+    //     delay.try_into().unwrap_or(c_int::max_value())
+    // });
+    // log::debug!("poll_oneoff poll_timeout = {:?}", poll_timeout);
+
+    // let ready = loop {
+    //     match poll(&mut poll_fds, poll_timeout) {
+    //         Err(_) => {
+    //             if Errno::last() == Errno::EINTR {
+    //                 continue;
+    //             }
+    //             return Err(host_impl::errno_from_nix(Errno::last()));
+    //         }
+    //         Ok(ready) => break ready as usize,
+    //     }
+    // };
+
+    Ok(())
+
+    // Ok(if ready == 0 {
+    //     poll_oneoff_handle_timeout_event(timeout.expect("timeout should not be None"), events)
+    // } else {
+    //     let ready_events = fd_events.into_iter().zip(poll_fds.into_iter()).take(ready);
+    //     poll_oneoff_handle_fd_event(ready_events, events)?
+    // })
 }
 
 fn get_monotonic_time() -> Duration {
