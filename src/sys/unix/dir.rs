@@ -1,5 +1,4 @@
 // Based on src/dir.rs from nix
-#![allow(clippy::use_self)]
 #![allow(unused)] // temporarily, until BSD catches up with this change
 use crate::hostcalls_impl::FileType;
 use libc;
@@ -33,19 +32,19 @@ impl Dir {
     /// Converts from a descriptor-based object, closing the descriptor on success or failure.
     #[inline]
     pub(crate) fn from<F: IntoRawFd>(fd: F) -> Result<Self> {
-        Dir::from_fd(fd.into_raw_fd())
+        unsafe { Self::from_fd(fd.into_raw_fd()) }
     }
 
     /// Converts from a file descriptor, closing it on success or failure.
-    pub(crate) fn from_fd(fd: RawFd) -> Result<Self> {
-        let d = unsafe { libc::fdopendir(fd) };
+    unsafe fn from_fd(fd: RawFd) -> Result<Self> {
+        let d = libc::fdopendir(fd);
         if d.is_null() {
             let e = Error::last();
-            unsafe { libc::close(fd) };
+            libc::close(fd);
             return Err(e);
         };
         // Always guaranteed to be non-null by the previous check
-        Ok(Dir(ptr::NonNull::new(d).unwrap()))
+        Ok(Self(ptr::NonNull::new(d).unwrap()))
     }
 
     /// Set the position of the directory stream, see `seekdir(3)`.
@@ -152,7 +151,7 @@ impl Entry {
         target_os = "solaris"
     ))]
     pub(crate) fn ino(&self) -> u64 {
-        self.0.d_ino as u64
+        self.0.d_ino.into()
     }
 
     /// Returns the inode number (`d_fileno`) of the underlying `dirent`.
@@ -205,10 +204,10 @@ pub(crate) struct SeekLoc(libc::c_long);
 #[cfg(not(target_os = "android"))]
 impl SeekLoc {
     pub(crate) unsafe fn from_raw(loc: i64) -> Self {
-        SeekLoc(loc as libc::c_long)
+        Self(loc.into())
     }
 
     pub(crate) fn to_raw(&self) -> i64 {
-        self.0 as i64
+        self.0.into()
     }
 }

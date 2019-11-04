@@ -2,7 +2,6 @@ pub(crate) mod fdentry_impl;
 pub(crate) mod host_impl;
 pub(crate) mod hostcalls_impl;
 
-#[allow(trivial_numeric_casts)]
 mod dir;
 
 #[cfg(any(
