@@ -13,6 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 lazy_static! {
     static ref START_MONOTONIC: Instant = Instant::now();
+    static ref PERF_COUNTER_RES: u64 = get_perf_counter_resolution_ns();
 }
 
 // Timer resolution on Windows is really hard. We may consider exposing the resolution of the respective
@@ -54,7 +55,7 @@ pub(crate) fn clock_res_get(clock_id: wasi::__wasi_clockid_t) -> Result<wasi::__
         // [6] https://bugs.python.org/issue19007
         wasi::__WASI_CLOCK_REALTIME => 55_000_000,
         // std::time::Instant uses QueryPerformanceCounter & QueryPerformanceFrequency internally
-        wasi::__WASI_CLOCK_MONOTONIC => get_perf_counter_resolution()?.as_nanos().try_into()?,
+        wasi::__WASI_CLOCK_MONOTONIC => *PERF_COUNTER_RES,
         // The best we can do is to hardcode the value from the docs.
         // https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes
         wasi::__WASI_CLOCK_PROCESS_CPUTIME_ID => 100,
@@ -108,9 +109,11 @@ fn get_thread_cputime() -> Result<Duration> {
     Ok(ThreadTime::try_now()?.as_duration())
 }
 
-fn get_perf_counter_resolution() -> Result<Duration> {
+fn get_perf_counter_resolution_ns() -> u64 {
     use winx::time::perf_counter_frequency;
     const NANOS_PER_SEC: u64 = 1_000_000_000;
-    let epsilon = NANOS_PER_SEC / (perf_counter_frequency()?);
-    Ok(Duration::from_nanos(epsilon))
+    // This should always succeed starting from Windows XP, so it's fine to panic in case of an error.
+    let freq = perf_counter_frequency().expect("QueryPerformanceFrequency returned an error");
+    let epsilon = NANOS_PER_SEC / freq;
+    epsilon
 }
