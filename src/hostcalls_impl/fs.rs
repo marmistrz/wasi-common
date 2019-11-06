@@ -1059,7 +1059,9 @@ pub(crate) struct Dirent {
 
 impl Dirent {
     #![allow(unused)] // temporarily, until BSD catches up with this change
-    pub fn to_raw(&self) -> Result<Vec<u8>> {
+    /// Serialize the directory entry to the format define by `__wasi_fd_readdir`,
+    /// so that the serialized entries can be concatenated by the implementation.
+    pub fn to_wasi_raw(&self) -> Result<Vec<u8>> {
         use std::slice;
 
         let name = self.name.as_bytes();

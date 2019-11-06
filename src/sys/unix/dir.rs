@@ -100,6 +100,9 @@ impl Iterator for IntoIter {
             // for the NUL byte. It doesn't look like the std library does this; it just uses
             // fixed-sized buffers (and libc's dirent seems to be sized so this is appropriate).
             // Probably fine here too then.
+            //
+            // See `impl Iterator for ReadDir` [1] for more details.
+            // [1] https://github.com/rust-lang/rust/blob/master/src/libstd/sys/unix/fs.rs
             let mut ent = std::mem::MaybeUninit::<dirent>::uninit();
             let mut result = ptr::null_mut();
             if let Err(e) = Errno::result(readdir_r(
