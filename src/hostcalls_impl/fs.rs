@@ -1079,7 +1079,6 @@ impl Dirent {
                 d_ino: self.ino,
                 d_next: self.cookie,
                 d_type: self.ftype.to_wasi(),
-                __bindgen_padding_0: mem::zeroed(),
             };
         }
 

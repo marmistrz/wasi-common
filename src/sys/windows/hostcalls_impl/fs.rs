@@ -266,7 +266,7 @@ pub(crate) fn fd_readdir(
     let iter = fd_readdir_impl(os_file, cookie)?;
     let mut used = 0;
     for dirent in iter {
-        let dirent_raw = dirent?.to_raw()?;
+        let dirent_raw = dirent?.to_wasi_raw()?;
         let offset = dirent_raw.len();
         if host_buf.len() < offset {
             break;
